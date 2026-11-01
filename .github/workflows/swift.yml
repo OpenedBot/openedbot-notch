@@ -1,0 +1,30 @@
+# Build and unit tests of the Swift package on macOS (AppKit/SwiftUI: no
+# Linux runner). The snapshot tests stay off (OPENEDBOT_SNAPSHOT_DIR unset).
+name: swift
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: swift build + test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain
+        run: swift --version
+      - name: Build (release, unsigned)
+        run: swift build -c release
+      - name: Test
+        run: swift test
