@@ -98,6 +98,7 @@ struct IslandCompactView: View {
                             }
                             .accessibilityLabel(tr("\(compact.unread) unread notifications", "\(compact.unread) notifications non lues"))
                         }
+                        if compact.yolo { YoloBadge(leases: model.yolo.leases) }
                     }
                     .font(.system(size: 11, weight: .semibold)).monospacedDigit()
                     .lineLimit(1).fixedSize()
@@ -147,16 +148,19 @@ struct IslandPanelView: View {
     var onRespond: (Bot, Approval, Bool) -> Void
     var onOpenNotice: (Notice) -> Void = { _ in }
     var onClearNotices: () -> Void = {}
+    var onKillYolo: () -> Void = {}
 
     var body: some View {
         let g = geometry
         let ear = NotchGeometry.islandEar
+        let yolo = !model.yolo.leases.isEmpty
         // Les demandes d'accord encore ouvertes ont leur carte : pas de doublon dans la liste.
         let pendingIDs = Set(model.bots.compactMap { $0.pending?.id })
         let approvalsShown = Island.approvals(bots: model.bots).count
         let recent = Array(model.inbox.notices.filter { n in n.approvalID.map { !pendingIDs.contains($0) } ?? true }
             .prefix(approvalsShown > 0 ? 3 : Island.noticeLimit))
-        let rowLimit = Island.rowLimit(approvals: approvalsShown, notices: recent.count)
+        // Le bandeau YOLO prend la place d'une demande d'accord.
+        let rowLimit = Island.rowLimit(approvals: approvalsShown + (yolo ? 1 : 0), notices: recent.count)
         let inner = NotchGeometry.islandWidth - 2 * ear - 24
         let side = max(0, (inner - (g.restLength ?? 0)) / 2)
         let rows = Island.rows(bots: model.bots)
@@ -186,6 +190,10 @@ struct IslandPanelView: View {
                 .frame(width: side, alignment: .trailing)
             }
             .frame(height: g.inset)
+
+            if yolo {
+                IslandYoloView(model: model, onKill: onKillYolo)
+            }
 
             if !recent.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -321,6 +329,90 @@ struct IslandApprovalView: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.waiting.opacity(0.35), lineWidth: 1))
+    }
+}
+
+/// « YOLO » et le temps qui reste au bail qui finit le dernier ; seul « YOLO » sans échéance connue.
+struct YoloBadge: View {
+    let leases: [YoloLease]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            if let lease = Yolo.displayed(leases, now: context.date) {
+                HStack(spacing: 4) {
+                    Text("YOLO").font(.system(size: 9.5, weight: .heavy)).foregroundStyle(.black)
+                        .lineLimit(1).fixedSize()
+                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                        .background(Capsule().fill(Palette.critical))
+                    if let end = lease.expiresAt {
+                        Text(Yolo.countdown(until: end, now: context.date)).foregroundStyle(Palette.critical)
+                            .lineLimit(1).fixedSize()
+                    }
+                }
+                .fixedSize()
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(lease.expiresAt.map { tr("YOLO active, ends in \(Yolo.countdown(until: $0, now: context.date))",
+                                                             "YOLO actif, fin dans \(Yolo.countdown(until: $0, now: context.date))") }
+                                    ?? tr("YOLO active", "YOLO actif"))
+            }
+        }
+    }
+}
+
+/// Le bandeau YOLO du panneau : combien de baux, ce que couvre le dernier à finir, le compte à
+/// rebours, et « Couper YOLO partout » avec une confirmation sur place (pas de fenêtre modale
+/// au-dessus d'un panneau qui se replie quand le pointeur le quitte).
+struct IslandYoloView: View {
+    let model: NotchModel
+    let onKill: () -> Void
+    @State private var confirming = false
+
+    var body: some View {
+        let state = model.yolo
+        VStack(alignment: .leading, spacing: 8) {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let active = state.active(at: context.date)
+                HStack(spacing: 6) {
+                    YoloBadge(leases: active)
+                        .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                    if let lease = Yolo.displayed(active, now: context.date) {
+                        Text("\(Yolo.leaseCount(active.count)) · \(Yolo.scopeText(lease, botName: lease.botID.flatMap { model.bot($0)?.name }))")
+                            .font(.system(size: 11.5)).foregroundStyle(Palette.textSecondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if confirming {
+                Text(tr("Turn YOLO off for the whole organization? Writes will ask for approval again.",
+                        "Couper YOLO pour toute l'organisation ? Les écritures redemanderont un accord."))
+                    .font(.system(size: 11.5)).foregroundStyle(Palette.textPrimary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    PillButton(title: tr("Cancel", "Annuler")) { confirming = false }.frame(width: 110)
+                    PillButton(title: tr("Turn off", "Couper"), tint: Palette.critical, prominent: true) {
+                        confirming = false
+                        onKill()
+                    }
+                    .frame(width: 110)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    if let error = state.killError {
+                        Text(error).font(.system(size: 11)).foregroundStyle(Palette.critical).lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                    PillButton(title: state.killing ? tr("Turning off…", "Coupure…") : tr("Turn YOLO off everywhere", "Couper YOLO partout"),
+                               tint: Palette.critical) {
+                        if !state.killing { confirming = true }
+                    }
+                    .frame(width: 170)
+                    .disabled(state.killing)
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.critical.opacity(0.4), lineWidth: 1))
     }
 }
 

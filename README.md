@@ -37,6 +37,9 @@ click to open the agent window: read the thread, approve or deny, reply. No need
   into a tray on hover; an "active only" mode.
 - **Announcements**: the notch opens briefly and plays a sound when a run finishes, a bot waits,
   or a runtime drops.
+- **YOLO badge** (signed in, camera-notch island): a red `YOLO` badge and a countdown while a
+  YOLO lease auto-approves a bot's writes on the host, and *Turn YOLO off everywhere* in the
+  expanded island. See [YOLO leases](#yolo-leases).
 - **Menu bar item**, four screen edges, settings window, English and French UI.
 
 An interactive HTML mockup of the design lives in [`design/index.html`](design/index.html)
@@ -77,6 +80,44 @@ Without an account the notch shows the demo bots. *Settings › Account* can sig
 openedbot server (default origin `https://openedbot.app`, HTTPS only except local/lab hosts)
 with the native PKCE flow; the session is kept in the macOS Keychain, never in `UserDefaults`.
 This path is experimental and not guaranteed to work against current servers.
+
+### YOLO leases
+
+openedbot's YOLO mode issues signed, time-limited leases that auto-approve a bot's writes on the
+host. When signed in (standalone or hosted), the notch reads them with the same client as the
+feed (bearer token, `X-OHB-Organization`, one replay after a 401) and shows them in the island:
+
+- **Compact island**: a red `YOLO` badge and the time left (`m:ss`, `h:mm:ss` past an hour) as
+  soon as one lease is active, even with no bot working.
+- **Expanded island**: the number of active leases, what the displayed lease covers (whole
+  runtime, a bot, a thread of a bot), and *Turn YOLO off everywhere*. The button asks for an
+  inline confirmation, then calls the kill route. A `403` says only owners and admins can do
+  it; any other failure is shown in the strip and written to *Settings › Journal*.
+
+The contract the notch reads (the reference is `apps/desktop/README.md` in OpenedBot/openedbot):
+
+| Route | Notch behaviour |
+|---|---|
+| `GET /api/organization/yolo/leases` | Polled every 30 s, and again just after the soonest `expiresAt`. `404`: the server has no YOLO, nothing shown. Other failures keep the last known leases (minus the expired ones) rather than hiding YOLO. |
+| `POST /api/organization/yolo/kill` | Body `{}`, response body ignored. Success clears the badge, then the leases are read again: the server has the last word. |
+
+Lease parsing is tolerant (`Sources/OHBPopup/Model/Yolo.swift`):
+
+- The response is `{ "leases": [...] }`, `{ "items": [...] }` or a bare array; an element that is
+  not an object is skipped, not the whole response.
+- Each lease reads `leaseId` (or `id`), `scope` (`thread`, `bot`, `runtime`, case-insensitive;
+  anything else counts as an active lease of unknown scope), `botId`, `threadId`, `runtimeId`,
+  `expiresAt`. Other fields are ignored.
+- `expiresAt` is ISO 8601 (with or without fractional seconds, `Z` or an offset) or an epoch, as
+  a number or a numeric string. An epoch of 10^11 or more is read as milliseconds, otherwise
+  as seconds (10^11 seconds is the year 5138, 10^11 milliseconds is 1973). A missing or
+  unreadable `expiresAt` keeps the lease active with no countdown, until the server drops it.
+- The badge shows the lease that ends **last** (YOLO stays on until then); a lease with no
+  deadline wins; on a tie, the broadest scope (runtime, bot, thread), then the lease id.
+- The countdown runs against the server's `expiresAt` using the Mac's clock (no skew
+  correction) and is rounded up: `0:01` until the last second, then the lease drops.
+
+The demo (signed out) never shows YOLO. The hosted-mode protocol is unchanged.
 
 The executable and module are still named `OHBPopup` internally (bundle id
 `app.openedbot.popup`), because the openedbot desktop app embeds the bundle under that name and
@@ -120,7 +161,7 @@ Sources/OHBPopup
 ├── Host/    hosted-mode stdio protocol
 ├── Model/   domain models, geometry, layout rules, mock feed
 └── Notch/   notch panel, rings, cards, agent window
-Tests/OHBPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol)
+Tests/OHBPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases)
 Resources/            Info.plist, bot artworks, faces, provider marks
 design/               static HTML mockup
 ```
