@@ -17,7 +17,7 @@ struct IslandTests {
                              usedSteps: 3, maxSteps: 8, tokens: 0, since: now.addingTimeInterval(-120))]
         }
         if pending {
-            b.pending = Approval(botID: id, runID: "\(id)-run", tool: "stripe.refund", command: "refund 49,00 €",
+            b.pending = Approval(botID: id, runID: "\(id)-run", tool: "payments.refund", command: "refund 49,00 €",
                                  expiresAt: now.addingTimeInterval(600))
         }
         return b
@@ -61,7 +61,7 @@ struct IslandTests {
 
     @Test func rowSaysWhatTheBotDoes() {
         let waiting = Island.row(for: bot("s", run: .awaitingApproval, pending: true))
-        #expect(waiting.status == "Attend ton accord : stripe.refund")
+        #expect(waiting.status == "Attend ton accord : payments.refund")
         var working = bot("w", run: .running)
         working.liveActivity = .tool("shopify.get_order")
         let row = Island.row(for: working)

@@ -262,7 +262,7 @@ function openDialog(i) {
     b.pending = null; b.approvals = 0; b.activity = allow ? 'working' : 'success';
     b.sessions.forEach(s => { if (s.state === 'waiting') { s.state = allow ? 'busy' : 'success'; s.word = allow ? 'travaille' : 'refusé'; } });
     b.thread.push({ who: 'system', text: allow ? 'Autorisé une fois · POST /api/approvals/…/respond {choice:"once"}' : 'Refusé · {choice:"deny"}' });
-    if (allow) b.thread.push({ who: 'tool', text: '<b>shell</b> stripe refunds create … → re_3Q… succeeded' });
+    if (allow) b.thread.push({ who: 'tool', text: '<b>shell</b> payments refunds create … → re_demo… succeeded' });
     toast(allow ? 'Autorisé' : 'Refusé'); renderNotch(); state.dialog = null; openDialog(i);
   }));
   const send = () => {

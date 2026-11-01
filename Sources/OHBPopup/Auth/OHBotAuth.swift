@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 // Le flux natif d'openedbot (openedbot API, `/api/auth/native/*`), le
-// même que les apps mobile et bureau d'openedbot : PKCE, un bearer opaque de 15 min, un refresh
+// même que les apps iOS et bureau d'openedbot : PKCE, un bearer opaque de 15 min, un refresh
 // token rotatif de 30 jours. Pas de magic link ni de token d'API côté utilisateur.
 
 /// La session que `/api/auth/native/token` renvoie. Un champ vide fait échouer le décodage.
@@ -33,10 +33,15 @@ struct OHBotSession: Codable, Equatable, Sendable {
         accessTokenExpiresAt = try c.decode(Date.self, forKey: .accessTokenExpiresAt)
     }
 
-    /// Rafraîchir avant d'envoyer : à moins de 30 s de l'expiration, comme le client mobile.
+    /// Rafraîchir avant d'envoyer : à moins de 30 s de l'expiration, comme le client iOS.
     func expires(within seconds: TimeInterval, now: Date = Date()) -> Bool {
         accessTokenExpiresAt.timeIntervalSince(now) < seconds
     }
+}
+
+enum OHBotPasswordLoginOutcome: Equatable, Sendable {
+    case signedIn(OHBotSession)
+    case codeRequired
 }
 
 /// Ce que `GET /api/auth/me` dit de la personne connectée. Tout est optionnel : le DTO
@@ -115,6 +120,9 @@ enum OHBotAuthError: Error, Equatable, Sendable {
 
     private static func message(forCode code: String?) -> String? {
         switch code {
+        case "EMAIL_LOGIN_CODE_INVALID": tr("Invalid or expired code.", "Code invalide ou expiré.")
+        case "EMAIL_LOGIN_CODE_COOLDOWN": tr("Wait a minute before requesting another code.", "Patientez une minute avant de demander un nouveau code.")
+        case "EMAIL_LOGIN_CODE_UNSENT": tr("The code could not be sent. Try again.", "Le code n’a pas pu être envoyé. Réessayez.")
         case "ALPHA_CLOSED": tr("This server is in closed alpha: your IP address is not allowed.",
                                 "Ce serveur est en alpha fermée : votre adresse IP n'est pas autorisée.")
         case "AUTH_NOT_A_MEMBER", "MEMBERSHIP_REQUIRED": tr("This account does not belong to any organization yet.",
@@ -131,7 +139,7 @@ enum OHBotAuthError: Error, Equatable, Sendable {
 }
 
 enum PKCE {
-    /// 32 octets aléatoires en hexadécimal (64 caractères, dans la plage 43–128 de l'API).
+    /// 32 octets aléatoires en hexadécimal (64 caractères, dans la plage de 43 à 128 caractères).
     static func makeVerifier() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
@@ -194,14 +202,26 @@ struct OHBotAuthClient: Sendable {
     }
 
     /// Mode identifiants : `authorize` donne un code à usage unique (5 min), `token` l'échange.
-    func login(email: String, password: String, organizationSlug: String?, verifier: String) async throws -> OHBotSession {
-        struct Body: Encodable { var email: String; var password: String; var codeChallenge: String; var redirectUri: String; var clientId: String; var organizationSlug: String? }
+    func login(email: String, password: String, organizationSlug: String?, emailCode: String?, verifier: String) async throws -> OHBotPasswordLoginOutcome {
+        struct Body: Encodable { var email: String; var password: String; var emailCode: String?; var codeChallenge: String; var redirectUri: String; var clientId: String; var organizationSlug: String? }
         struct Reply: Decodable { var code: String }
+        struct StatusReply: Decodable { var status: String }
         let body = Body(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password,
+                        emailCode: emailCode?.isEmpty == true ? nil : emailCode,
                         codeChallenge: PKCE.challenge(for: verifier), redirectUri: Self.redirectURI, clientId: Self.clientID,
                         organizationSlug: organizationSlug?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
-        let reply = try await decode(Reply.self, from: request("POST", "/api/auth/native/authorize", json: body))
-        return try await exchange(code: reply.code, verifier: verifier)
+        let (data, response) = try await performWithResponse(request("POST", "/api/auth/native/authorize", json: body))
+        switch response.statusCode {
+        case 202:
+            let status = try decode(StatusReply.self, from: data)
+            guard status.status == "code_required" else { throw OHBotAuthError.invalidResponse }
+            return .codeRequired
+        case 200:
+            let reply = try decode(Reply.self, from: data)
+            return .signedIn(try await exchange(code: reply.code, verifier: verifier))
+        default:
+            throw OHBotAuthError.invalidResponse
+        }
     }
 
     struct GoogleAttempt: Equatable, Sendable { let id: String; let authorizeURL: URL }
@@ -284,6 +304,10 @@ struct OHBotAuthClient: Sendable {
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
+        try await performWithResponse(request).0
+    }
+
+    private func performWithResponse(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let http: HTTPURLResponse
         do {
@@ -300,11 +324,15 @@ struct OHBotAuthClient: Sendable {
             let code = (try? JSONDecoder().decode(Envelope.self, from: data))?.error?.code
             throw OHBotAuthError.http(status: http.statusCode, code: code)
         }
-        return data
+        return (data, http)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from request: URLRequest) async throws -> T {
         let data = try await perform(request)
+        return try decode(type, from: data)
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do { return try Self.decoder.decode(T.self, from: data) } catch { throw OHBotAuthError.invalidResponse }
     }
 

@@ -192,7 +192,7 @@ struct SettingsView: View {
                     .font(.system(size: 12)).foregroundStyle(Surface.textSecondary)
             }
             SettingsCard {
-                SettingsRow(tr("Support is waiting", "Support attend"), tr("A Stripe approval on the current run", "Une approbation Stripe sur le run en cours")) { SecondaryButton(tr("Run", "Lancer")) { feed.simulateApproval() } }
+                SettingsRow(tr("Support is waiting", "Support attend"), tr("A payment approval on the current run", "Une approbation de paiement sur le run en cours")) { SecondaryButton(tr("Run", "Lancer")) { feed.simulateApproval() } }
                 SettingsRow(tr("Support is done", "Support a fini"), tr("The run ends and the notch announces it", "Le run se termine, l'encoche l'annonce")) { SecondaryButton(tr("Run", "Lancer")) { feed.simulateFinish() } }
                 SettingsRow(tr("gpu-box goes down or comes back", "gpu-box tombe ou revient"), tr("Growth's runtime changes state", "Le runtime de Growth change d'état")) { SecondaryButton(tr("Toggle", "Basculer")) { feed.toggleOffline() } }
                 SettingsRow(tr("Replay the demo", "Rejouer la démo"), tr("Resets the ten bots to their starting state", "Remet les dix bots à leur état de départ")) { SecondaryButton(tr("Replay", "Rejouer")) { feed.start() } }
@@ -211,6 +211,7 @@ struct AccountPage: View {
     var feedState: NotchModel.FeedState?
     @State private var email = ""
     @State private var password = ""
+    @State private var emailCode = ""
     @State private var organizationSlug = ""
 
     var body: some View {
@@ -256,29 +257,9 @@ struct AccountPage: View {
                     .padding(.horizontal, 12).padding(.vertical, 10)
                 }
             case .signedOut:
-                VStack(alignment: .leading, spacing: 12) {
-                    if let p = account.providers, !p.googleEnabled {
-                        Text(tr("Google sign-in is unavailable on this server\(p.google?.reason.map { ": \($0)" } ?? "").", "Connexion Google indisponible sur ce serveur\(p.google?.reason.map { " : \($0)" } ?? "")."))
-                            .font(.system(size: 12)).foregroundStyle(Surface.textSecondary)
-                    } else {
-                        SecondaryButton(tr("Continue with Google", "Continuer avec Google"), symbol: "globe", wide: true) { account.signInWithGoogle() }
-                            .disabled(account.origin == nil)
-                    }
-                    HStack(spacing: 10) {
-                        Rectangle().fill(Surface.separator).frame(height: 1)
-                        Text(tr("or with a password", "ou avec un mot de passe")).font(.system(size: 11)).foregroundStyle(Surface.textTertiary)
-                        Rectangle().fill(Surface.separator).frame(height: 1)
-                    }
-                    VStack(spacing: 8) {
-                        SettingsField(tr("Email", "E-mail"), text: $email, wide: true).textContentType(.username)
-                        SettingsField(tr("Password", "Mot de passe"), text: $password, secure: true, wide: true).textContentType(.password)
-                            .onSubmit { Task { await signIn() } }
-                        SettingsField(tr("Organization (optional)", "Organisation (facultatif)"), text: $organizationSlug, wide: true)
-                    }
-                    PrimaryButton(tr("Sign in", "Se connecter"), wide: true) { Task { await signIn() } }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(account.origin == nil || email.isEmpty || password.isEmpty)
-                }
+                passwordSignInForm(codeRequired: false)
+            case .codeRequired:
+                passwordSignInForm(codeRequired: true)
             }
 
             if let error = account.error {
@@ -290,6 +271,57 @@ struct AccountPage: View {
             }
         }
         .task { await account.checkProviders() }
+        .onChange(of: emailCode) { _, value in
+            let digits = String(value.filter { "0123456789".contains($0) }.prefix(6))
+            if digits != value { emailCode = digits }
+        }
+        // The pending code challenge lives with this page's credentials: leaving
+        // the page drops it, so coming back never shows an empty, locked form.
+        .onDisappear { account.cancelCodeSignIn() }
+    }
+
+    @ViewBuilder
+    private func passwordSignInForm(codeRequired: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !codeRequired {
+                if let p = account.providers, !p.googleEnabled {
+                    Text(tr("Google sign-in is unavailable on this server\(p.google?.reason.map { ": \($0)" } ?? "").", "Connexion Google indisponible sur ce serveur\(p.google?.reason.map { " : \($0)" } ?? "")."))
+                        .font(.system(size: 12)).foregroundStyle(Surface.textSecondary)
+                } else {
+                    SecondaryButton(tr("Continue with Google", "Continuer avec Google"), symbol: "globe", wide: true) { account.signInWithGoogle() }
+                        .disabled(account.origin == nil)
+                }
+                HStack(spacing: 10) {
+                    Rectangle().fill(Surface.separator).frame(height: 1)
+                    Text(tr("or with a password", "ou avec un mot de passe")).font(.system(size: 11)).foregroundStyle(Surface.textTertiary)
+                    Rectangle().fill(Surface.separator).frame(height: 1)
+                }
+            }
+            VStack(spacing: 8) {
+                SettingsField(tr("Email", "E-mail"), text: $email, wide: true).textContentType(.username)
+                    .disabled(codeRequired)
+                SettingsField(tr("Password", "Mot de passe"), text: $password, secure: true, wide: true).textContentType(.password)
+                    .onSubmit { Task { await signIn() } }
+                    .disabled(codeRequired)
+                SettingsField(tr("Organization (optional)", "Organisation (facultatif)"), text: $organizationSlug, wide: true)
+                    .disabled(codeRequired)
+                if codeRequired {
+                    SettingsField(tr("Code received by email", "Code reçu par email"), text: $emailCode, wide: true)
+                        .onSubmit { Task { await signIn() } }
+                }
+            }
+            if codeRequired {
+                Button(tr("Back", "Retour")) { cancelCodeSignIn() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Surface.textSecondary)
+            }
+            PrimaryButton(
+                codeRequired ? tr("Verify code", "Vérifier le code") : tr("Sign in", "Se connecter"),
+                wide: true
+            ) { Task { await signIn() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(account.origin == nil || email.isEmpty || password.isEmpty || (codeRequired && emailCode.count != 6))
+        }
     }
 
     private func feedStateColor(_ s: NotchModel.FeedState) -> Color {
@@ -313,8 +345,32 @@ struct AccountPage: View {
     }
 
     private func signIn() async {
-        await account.signIn(email: email, password: password, organizationSlug: organizationSlug)
-        if account.isSignedIn { password = "" }
+        let verificationCode: String?
+        if case .codeRequired = account.phase {
+            verificationCode = emailCode.isEmpty ? nil : emailCode
+        } else {
+            verificationCode = nil
+        }
+        await account.signIn(
+            email: email,
+            password: password,
+            organizationSlug: organizationSlug,
+            emailCode: verificationCode
+        )
+        if account.isSignedIn {
+            password = ""
+            emailCode = ""
+        } else if case .signedOut = account.phase {
+            emailCode = ""
+        }
+    }
+
+    private func cancelCodeSignIn() {
+        account.cancelCodeSignIn()
+        email = ""
+        password = ""
+        emailCode = ""
+        organizationSlug = ""
     }
 }
 

@@ -113,7 +113,11 @@ struct AuthClientTests {
         let (c, t) = make()
         t.on("/api/auth/native/authorize", (200, #"{"code":"c-1","redirectUri":"ohb://auth/callback"}"#))
         t.on("/api/auth/native/token", (200, sessionJSON))
-        let s = try await c.login(email: " k@example.com ", password: "pw", organizationSlug: "", verifier: "v")
+        let outcome = try await c.login(email: " k@example.com ", password: "pw", organizationSlug: "", emailCode: nil, verifier: "v")
+        guard case .signedIn(let s) = outcome else {
+            Issue.record("expected signed-in outcome")
+            return
+        }
         #expect(s.refreshToken == "rt-1")
         let authorize = t.calls[0]
         #expect(authorize.body["email"] as? String == "k@example.com")
@@ -125,17 +129,52 @@ struct AuthClientTests {
         #expect(token.body["code"] as? String == "c-1" && token.body["codeVerifier"] as? String == "v")
     }
 
+    @Test func passwordLoginReturnsCodeRequiredWithoutTokenExchange() async throws {
+        let (c, t) = make()
+        t.on("/api/auth/native/authorize", (202, #"{"status":"code_required"}"#))
+
+        let outcome = try await c.login(email: "k@example.com", password: "pw", organizationSlug: nil, emailCode: "", verifier: "v")
+
+        #expect(outcome == .codeRequired)
+        #expect(t.calls.map(\.path) == ["/api/auth/native/authorize"])
+        #expect(t.calls[0].body["emailCode"] == nil)
+    }
+
+    @Test func secondPasswordLoginCarriesEmailCode() async throws {
+        let (c, t) = make()
+        t.on(
+            "/api/auth/native/authorize",
+            (202, #"{"status":"code_required"}"#),
+            (200, #"{"code":"c-1"}"#)
+        )
+        t.on("/api/auth/native/token", (200, sessionJSON))
+
+        #expect(try await c.login(email: "k@example.com", password: "pw", organizationSlug: nil, emailCode: nil, verifier: "v") == .codeRequired)
+        let outcome = try await c.login(email: "k@example.com", password: "pw", organizationSlug: nil, emailCode: "123456", verifier: "v")
+
+        guard case .signedIn = outcome else {
+            Issue.record("expected signed-in outcome")
+            return
+        }
+        #expect(t.calls[0].body["emailCode"] == nil)
+        #expect(t.calls[1].body["emailCode"] as? String == "123456")
+        #expect(t.calls[2].path == "/api/auth/native/token")
+    }
+
     @Test func apiErrorsCarryTheirCode() async {
         let (c, t) = make()
         t.on("/api/auth/native/authorize", (403, #"{"error":{"code":"ALPHA_CLOSED","message":"nope"}}"#))
         await #expect(throws: OHBotAuthError.http(status: 403, code: "ALPHA_CLOSED")) {
-            try await c.login(email: "k", password: "p", organizationSlug: nil, verifier: "v")
+            try await c.login(email: "k", password: "p", organizationSlug: nil, emailCode: nil, verifier: "v")
         }
         #expect(OHBotAuthError.http(status: 403, code: "ALPHA_CLOSED").userMessage.contains("alpha"))
         t.on("/api/auth/native/authorize", (500, "not json"))
         await #expect(throws: OHBotAuthError.http(status: 500, code: nil)) {
-            try await c.login(email: "k", password: "p", organizationSlug: nil, verifier: "v")
+            try await c.login(email: "k", password: "p", organizationSlug: nil, emailCode: nil, verifier: "v")
         }
+        #expect(OHBotAuthError.http(status: 401, code: "EMAIL_LOGIN_CODE_INVALID").userMessage == "Code invalide ou expiré.")
+        #expect(OHBotAuthError.http(status: 429, code: "EMAIL_LOGIN_CODE_COOLDOWN").userMessage == "Patientez une minute avant de demander un nouveau code.")
+        #expect(OHBotAuthError.http(status: 503, code: "EMAIL_LOGIN_CODE_UNSENT").userMessage == "Le code n’a pas pu être envoyé. Réessayez.")
     }
 
     @Test func networkFailureAndBadJSONAreDistinct() async {
@@ -196,7 +235,7 @@ struct AccountModelTests {
         t.on("/api/auth/native/authorize", (200, #"{"code":"c-1"}"#))
         t.on("/api/auth/native/token", (200, sessionJSON))
         t.on("/api/auth/me", (200, #"{"user":{"email":"k@example.com"},"organization":{"name":"Acme"},"role":"operator"}"#))
-        await m.signIn(email: "k@example.com", password: "pw", organizationSlug: "acme")
+        await m.signIn(email: "k@example.com", password: "pw", organizationSlug: "acme", emailCode: nil)
         #expect(m.phase == .signedIn && m.error == nil)
         #expect(m.account?.label == "k@example.com · Acme · operator")
         let stored = try k.load(origin: m.origin!)
@@ -213,12 +252,40 @@ struct AccountModelTests {
         #expect(t2.calls.last?.path == "/api/auth/logout")
     }
 
+    @Test func accountKeepsCodeRequiredStateAndResubmitsTheCode() async throws {
+        let (m, t, k, _, _) = make()
+        t.on(
+            "/api/auth/native/authorize",
+            (202, #"{"status":"code_required"}"#),
+            (401, #"{"error":{"code":"EMAIL_LOGIN_CODE_INVALID"}}"#),
+            (200, #"{"code":"c-1"}"#)
+        )
+        t.on("/api/auth/native/token", (200, sessionJSON))
+        t.on("/api/auth/me", (200, #"{"user":{"email":"k@example.com"}}"#))
+
+        await m.signIn(email: "k@example.com", password: "pw", organizationSlug: "", emailCode: nil)
+        #expect(m.phase == .codeRequired(email: "k@example.com"))
+        #expect(m.error == nil)
+        #expect(t.calls.filter { $0.path.hasSuffix("/token") }.isEmpty)
+
+        await m.signIn(email: "k@example.com", password: "pw", organizationSlug: "", emailCode: "000000")
+        #expect(m.phase == .codeRequired(email: "k@example.com"))
+        #expect(m.error == "Code invalide ou expiré.")
+
+        await m.signIn(email: "k@example.com", password: "pw", organizationSlug: "", emailCode: "123456")
+        #expect(m.phase == .signedIn)
+        #expect(t.calls.first?.body["emailCode"] == nil)
+        #expect(t.calls.filter { $0.path.hasSuffix("/authorize") }[1].body["emailCode"] as? String == "000000")
+        #expect(t.calls.filter { $0.path.hasSuffix("/authorize") }[2].body["emailCode"] as? String == "123456")
+        try k.delete(origin: m.origin!)
+    }
+
     @Test func emptyFieldsAndBadOriginFailBeforeAnyRequest() async {
         let (m, t, _, _, _) = make()
-        await m.signIn(email: "", password: "", organizationSlug: "")
+        await m.signIn(email: "", password: "", organizationSlug: "", emailCode: nil)
         #expect(m.error == "E-mail et mot de passe sont requis." && t.calls.isEmpty)
         m.originText = "ftp://nope"
-        await m.signIn(email: "k", password: "p", organizationSlug: "")
+        await m.signIn(email: "k", password: "p", organizationSlug: "", emailCode: nil)
         #expect(m.error == OHBotAuthError.invalidOrigin.userMessage && t.calls.isEmpty && m.phase == .signedOut)
     }
 

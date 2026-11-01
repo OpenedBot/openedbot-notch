@@ -494,7 +494,7 @@ final class OHBotFeed: BotFeed {
                 if Task.isCancelled { return }
                 attempt += 1
                 setState(.retrying(Self.text(error)))
-                // 250 ms × 2^n plafonné, avec une moitié aléatoire : le même rythme que le client mobile.
+                // 250 ms × 2^n plafonné, avec une moitié aléatoire : le même rythme que le client iOS.
                 let base = min(timing.reconnectCap, .milliseconds(250 * (1 << min(attempt, 5))))
                 let jittered = base / 2 + Duration.milliseconds(Int.random(in: 0...max(1, Int(base.components.seconds * 1000 + base.components.attoseconds / 1_000_000_000_000_000) / 2)))
                 try? await Task.sleep(for: jittered)

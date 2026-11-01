@@ -67,8 +67,8 @@ const SCENARIOS = {
     b.activity = 'waiting'; b.approvals = 1;
     b.sessions.unshift({ name: 'DM · Léa (client #4821)', detail: 'Rembourser la commande 4821 ?', state: 'waiting', word: 'attend', since: '12 s' });
     b.sessions.splice(2, 1);
-    b.pending = { tool: 'shell', bot: 'Support', command: 'stripe refunds create --charge ch_3Q… --amount 4900' };
-    b.thread.push({ who: 'bot', text: 'Je lance le remboursement de 49,00 € pour la commande 4821. Il me faut ton accord pour la commande Stripe.', meta: '13:42' });
+    b.pending = { tool: 'shell', bot: 'Support', command: 'payments refunds create --charge ch_demo… --amount 4900' };
+    b.thread.push({ who: 'bot', text: 'Je lance le remboursement de 49,00 € pour la commande 4821. Il me faut ton accord pour la commande de paiement.', meta: '13:42' });
   },
   done(d) {
     const b = d.bots[0];
