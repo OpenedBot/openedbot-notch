@@ -1,5 +1,7 @@
 # Build and unit tests of the Swift package on macOS (AppKit/SwiftUI: no
 # Linux runner). The snapshot tests stay off (OPENEDBOT_SNAPSHOT_DIR unset).
+# The newest Xcode of the image is selected: Swift 6.1 (macos-15 default)
+# times out type-checking AgentDialog.body, which Swift 6.4 builds fine.
 name: swift
 
 on:
@@ -18,12 +20,16 @@ concurrency:
 jobs:
   test:
     name: swift build + test
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Toolchain
-        run: swift --version
+      - name: Toolchain (newest Xcode on the image)
+        run: |
+          xcode="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          sudo xcode-select -s "$xcode"
+          echo "$xcode"
+          swift --version
       - name: Build (release, unsigned)
         run: swift build -c release
       - name: Test
