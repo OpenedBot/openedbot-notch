@@ -22,7 +22,7 @@ click to open the agent window: read the thread, approve or deny, reply. No need
 | Component | Role |
 |---|---|
 | **openedbot-notch** (this repo) | Prototype macOS notch UI, runs standalone on mock data |
-| openedbot desktop app | Embeds this bundle on macOS and runs it in hosted mode |
+| openedbot desktop app ([`apps/desktop`](https://github.com/OpenedBot/openedbot/tree/main/apps/desktop) in OpenedBot/openedbot) | Embeds this bundle on macOS and runs it in hosted mode |
 | openedbot console | The web console the notch can optionally sign in to |
 | edge-setup | Host-side installer and connector for the agents openedbot drives |
 
@@ -82,6 +82,20 @@ The executable and module are still named `OHBPopup` internally (bundle id
 `app.openedbot.popup`), because the openedbot desktop app embeds the bundle under that name and
 launches it with `--hosted`.
 
+### Embedding in the desktop app
+
+The desktop app's `make package-mac` (in OpenedBot/openedbot) looks for this repository's bundle in
+a checkout next to its own, `../openedbot-notch` from its root (`NOTCH_DIR=/path/to/openedbot-notch`
+otherwise):
+
+```sh
+make bundle    # dist/OHBPopup.app, with OHBHostedProtocol 1 in its Info.plist
+```
+
+The hosted-mode protocol (`Sources/OHBPopup/Host/HostProtocol.swift`) mirrors
+[`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts),
+which is the reference: change both sides together.
+
 ## Configuration
 
 No environment variables are needed to run it. In the app, *Settings* has pages for General, Account, Models, Journal,
@@ -119,7 +133,8 @@ design/               static HTML mockup
 ## Contributing
 
 This is a prototype published for reference. Issues and pull requests are welcome; please keep
-changes small and run `make test` before opening one.
+changes small and run `make test` before opening one. Every pull request and push to `main`
+is scanned by gitleaks (`gitleaks git . -c .gitleaks.toml`).
 
 ## License
 

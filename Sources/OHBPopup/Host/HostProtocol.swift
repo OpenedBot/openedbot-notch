@@ -1,7 +1,8 @@
 import Foundation
 
 /// Le protocole hôte ↔ popup, v1 : une ligne JSON par message, de l'hôte sur notre stdin, vers
-/// l'hôte sur notre stdout. Miroir du protocole de l'app bureau openedbot, qui fait foi.
+/// l'hôte sur notre stdout. Miroir du protocole de l'app bureau openedbot, qui fait foi
+/// (OpenedBot/openedbot, apps/desktop/src/shared/popup-protocol.ts) : changer les deux ensemble.
 ///
 /// Règles : une version inconnue arrête la session ; une ligne mal formée est ignorée et
 /// journalisée sans son contenu ; jamais de refresh token sur ce canal ; jamais de jeton dans
