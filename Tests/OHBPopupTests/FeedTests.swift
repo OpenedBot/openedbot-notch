@@ -81,9 +81,9 @@ struct OHBotMappingTests {
     @Test func approvalTakesTheCommandFromTheSnapshotAndTheDeadlineFromTheInbox() {
         let due = Date().addingTimeInterval(500)
         let item = InboxDto.Item(kind: "approval", id: "ap-1", botId: "b", threadId: "t", approvalId: "ap-1", runId: "r", summary: "Rembourser", expiresAt: due, occurredAt: nil)
-        let request = ApprovalRequestDto(id: "ap-1", runId: "r", kind: "shell", action: "stripe refunds create", detail: nil, status: "pending", requestedAt: nil)
+        let request = ApprovalRequestDto(id: "ap-1", runId: "r", kind: "shell", action: "payments refunds create", detail: nil, status: "pending", requestedAt: nil)
         let a = OHBotMapping.approval(item: item, botID: "b", request: request)
-        #expect(a.remoteID == "ap-1" && a.command == "stripe refunds create" && a.expiresAt == due && a.tool == "shell")
+        #expect(a.remoteID == "ap-1" && a.command == "payments refunds create" && a.expiresAt == due && a.tool == "shell")
         let b = OHBotMapping.approval(item: item, botID: "b", request: nil)
         #expect(b.command == "Rembourser") // sans snapshot : le résumé, jamais rien
     }
@@ -132,7 +132,7 @@ struct OHBotFeedTests {
                      {"id":"m2","role":"assistant","content":[{"type":"tool-call","toolCallId":"c","toolName":"zendesk.list_tickets","args":{}},{"type":"text","text":"Il me faut ton accord."}],"runId":"r-1","createdAt":"\(iso)"}],
          "runs":[{"id":"r-1","status":"awaiting_approval","input":"Trie les tickets","output":null,"usage":null,"error":null,"createdAt":"\(iso)","startedAt":"\(iso)","endedAt":null,"workflowId":"w-1"}],
          "workflows":[{"id":"w-1","kind":"routine","status":"awaiting_approval","rootRunId":"r-1","usedSteps":3,"maxSteps":8,"usedTokens":900,"errorMessage":null}],
-         "approvals":[{"id":"ap-1","runId":"r-1","threadId":"t-sup","kind":"shell","action":"stripe refunds create --amount 4900","detail":"Rembourser 4821","choices":["once","deny"],"status":"pending","requestedAt":"\(iso)","respondedAt":null}]}
+         "approvals":[{"id":"ap-1","runId":"r-1","threadId":"t-sup","kind":"shell","action":"payments refunds create --amount 4900","detail":"Rembourser 4821","choices":["once","deny"],"status":"pending","requestedAt":"\(iso)","respondedAt":null}]}
         """
     }
 
@@ -170,7 +170,7 @@ struct OHBotFeedTests {
         #expect(sup.runtime.model == "claude-sonnet-5-5" && sup.runtime.mode == "manual" && sup.runtime.connected)
         #expect(sup.runtime.connectorVersion == "1.4.2" && sup.runtime.outdated)
         #expect(sup.inboxCount == 2 && sup.isAlert)
-        #expect(sup.pending?.remoteID == "ap-1" && sup.pending?.command == "stripe refunds create --amount 4900")
+        #expect(sup.pending?.remoteID == "ap-1" && sup.pending?.command == "payments refunds create --amount 4900")
         #expect(sup.runs.first?.status == .awaitingApproval && sup.runs.first?.usedSteps == 3 && sup.runs.first?.kind == .routine)
         #expect(sup.activity == .waiting && sup.progress == 3.0 / 8.0)
         // Le fil : messages persistés (le texte, les parts tool-call ne sont pas rendues), aucune ligne locale.

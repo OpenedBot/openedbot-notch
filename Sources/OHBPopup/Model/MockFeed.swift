@@ -220,7 +220,7 @@ final class MockBotFeed: BotFeed {
                 // Étape 4 : une commande qui demande l'accord de l'opérateur.
                 var approvalID: UUID?
                 model.update("support") { bot in
-                    bot.thread.append(ChatMessage(role: .bot, text: tr("I’m starting the €49.00 refund for order 4821. I need your approval for the Stripe command.", "Je lance le remboursement de 49,00 € pour la commande 4821. Il me faut ton accord pour la commande Stripe.")))
+                    bot.thread.append(ChatMessage(role: .bot, text: tr("I’m starting the €49.00 refund for order 4821. I need your approval for the payment command.", "Je lance le remboursement de 49,00 € pour la commande 4821. Il me faut ton accord pour la commande de paiement.")))
                     Self.askApproval(&bot, runID: "rt-tri")
                     approvalID = bot.pending?.id
                 }
@@ -343,7 +343,7 @@ final class MockBotFeed: BotFeed {
         }
         if bot.pending == nil { bot.inboxCount += 1 }
         bot.pending = Approval(botID: bot.id, runID: run, tool: "shell",
-                               command: "stripe refunds create --charge ch_3Q… --amount 4900",
+                               command: "payments refunds create --charge ch_demo… --amount 4900",
                                expiresAt: Date().addingTimeInterval(9 * 60))
         if let r = bot.runs.firstIndex(where: { $0.id == run }) { bot.runs[r].status = .awaitingApproval }
     }

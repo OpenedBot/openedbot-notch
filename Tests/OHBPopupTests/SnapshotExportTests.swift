@@ -20,7 +20,7 @@ struct SnapshotExportTests {
         model.update("support") { bot in
             bot.thread.append(ChatMessage(role: .user, text: "Vérifie que la commande 4821 a bien été livrée en retard avant de rembourser."))
             bot.thread.append(ChatMessage(role: .tool, text: "shopify.get_order 4821 → delivered_at 2026-10-09, promised 2026-10-03"))
-            bot.thread.append(ChatMessage(role: .bot, text: "Six jours de retard, le remboursement est justifié. Je lance le remboursement de 49,00 € : il me faut ton accord pour la commande Stripe."))
+            bot.thread.append(ChatMessage(role: .bot, text: "Six jours de retard, le remboursement est justifié. Je lance le remboursement de 49,00 € : il me faut ton accord pour la commande de paiement."))
         }
         func shoot(_ name: String, _ view: some View, size: CGSize) throws {
             let host = NSHostingView(rootView: view)
@@ -109,7 +109,7 @@ struct SnapshotExportTests {
         t.on("/api/auth/native/authorize", (200, #"{"code":"c"}"#))
         t.on("/api/auth/native/token", (200, #"{"accessToken":"a","accessTokenExpiresAt":"2099-01-01T00:00:00Z","refreshToken":"r","organizationId":"o"}"#))
         t.on("/api/auth/me", (200, #"{"user":{"email":"operateur@acme.test","name":"Camille"},"organization":{"name":"Acme"},"role":"operator"}"#))
-        await account.signIn(email: "operateur@acme.test", password: "x", organizationSlug: "")
+        await account.signIn(email: "operateur@acme.test", password: "x", organizationSlug: "", emailCode: nil)
         try shoot("snap-settings-account-in", SettingsView(model: model, feed: feed, account: account), size: size)
 
         // Le journal en direct et la carte du runtime, sur un état réaliste.

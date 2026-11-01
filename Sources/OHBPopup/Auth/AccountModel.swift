@@ -20,6 +20,7 @@ final class AccountModel: TokenSource {
 
     enum Phase: Equatable, Sendable {
         case signedOut
+        case codeRequired(email: String)
         /// Une connexion en cours, avec ce qu'on attend (« Google dans le navigateur… »).
         case busy(String)
         case signedIn
@@ -105,23 +106,57 @@ final class AccountModel: TokenSource {
 
     // MARK: Connexion
 
-    func signIn(email: String, password: String, organizationSlug: String) async {
+    func signIn(email: String, password: String, organizationSlug: String, emailCode: String?) async {
         guard !isBusy else { return }
         error = nil
         guard !email.trimmingCharacters(in: .whitespaces).isEmpty, !password.isEmpty else {
             error = tr("Email and password are required.", "E-mail et mot de passe sont requis.")
             return
         }
+        let verificationCode = emailCode?.isEmpty == true ? nil : emailCode
         phase = .busy(tr("Signing in…", "Connexion…"))
         do {
             let c = try client()
             let verifier = try PKCE.makeVerifier()
-            let s = try await c.login(email: email, password: password, organizationSlug: organizationSlug, verifier: verifier)
+            let outcome = try await c.login(
+                email: email,
+                password: password,
+                organizationSlug: organizationSlug,
+                emailCode: verificationCode,
+                verifier: verifier
+            )
+            guard case .signedIn(let s) = outcome else {
+                phase = .codeRequired(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+                return
+            }
             try await adopt(s, origin: c.origin)
             await loadAccount()
         } catch {
-            fail(error)
+            if verificationCode != nil,
+               let authError = error as? OHBotAuthError,
+               shouldKeepCodeStep(after: authError) {
+                self.error = authError.userMessage
+                phase = .codeRequired(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+            } else {
+                fail(error)
+            }
         }
+    }
+
+    private func shouldKeepCodeStep(after error: OHBotAuthError) -> Bool {
+        switch error {
+        case .http(status: 401, code: "EMAIL_LOGIN_CODE_INVALID"),
+             .http(status: 429, code: "EMAIL_LOGIN_CODE_COOLDOWN"):
+            true
+        default:
+            false
+        }
+    }
+
+    func cancelCodeSignIn() {
+        guard case .codeRequired = phase else { return }
+        phase = .signedOut
+        error = nil
     }
 
     /// Google : la tentative, le navigateur, puis `claim` en boucle jusqu'au code.
