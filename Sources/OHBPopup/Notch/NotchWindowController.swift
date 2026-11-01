@@ -42,6 +42,8 @@ final class NotchWindowController {
     var onOpenConsole: ((String) -> Void)?
     /// Les notifications : bannières, badge et lecture, en mode île.
     var notices: NoticeCenter?
+    /// Les baux YOLO, avec une session openedbot seulement : « Couper YOLO partout » passe par lui.
+    var yolo: YoloMonitor?
     var isIsland: Bool { geometry.isIsland }
     func hasDialog(_ botID: String) -> Bool { dialogs[botID] != nil }
     private var screenObserver: NSObjectProtocol?
@@ -114,7 +116,8 @@ final class NotchWindowController {
                                       onOpenNotice: { [weak self] notice in self?.openNotice(notice) },
                                       onLater: { [weak self] in self?.notices?.dismissBanner() },
                                       onShowAll: { [weak self] in self?.showAllNotices() },
-                                      onClearNotices: { [weak self] in self?.notices?.clear() })
+                                      onClearNotices: { [weak self] in self?.notices?.clear() },
+                                      onKillYolo: { [weak self] in self?.yolo?.kill() })
         panel.setFrame(geometry.panelFrame, display: true)
     }
 
@@ -201,7 +204,7 @@ final class NotchWindowController {
         var wingsSide: CGFloat?
         if geometry.isIsland, !model.showsBody {
             let compact = Island.compact(bots: model.bots, unread: model.inbox.unreadCount,
-                                         latestUnreadBotID: model.inbox.unread.first?.botID)
+                                         latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()))
             if compact != nil || model.islandFlash != nil {
                 wingsSide = Island.sideWidth(compact: compact, flash: model.islandFlash, cameraHeight: geometry.inset)
             }

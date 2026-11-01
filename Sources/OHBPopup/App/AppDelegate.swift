@@ -111,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notices?.stop()
         feed?.stop()
         live?.stop()
+        notch?.yolo?.stop()
         notch?.shutdown()
     }
 
@@ -148,7 +149,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             live = f
             notch.feed = f
             f.start()
+            let y = YoloMonitor(model: model, account: tokens)
+            notch.yolo = y
+            y.start()
         } else if !tokens.isSignedIn {
+            notch.yolo?.stop()
+            notch.yolo = nil
             if let f = live {
                 f.stop()
                 live = nil
