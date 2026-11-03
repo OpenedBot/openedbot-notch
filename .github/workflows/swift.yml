@@ -34,3 +34,10 @@ jobs:
         run: swift build -c release
       - name: Test
         run: swift test
+      - name: Bundle (ad hoc, as the desktop release builds it)
+        env:
+          OPENEDBOT_NOTCH_ADHOC: "1"
+        run: |
+          make bundle
+          codesign --verify --strict --verbose=2 dist/OHBPopup.app
+          /usr/libexec/PlistBuddy -c 'Print :OHBHostedProtocol' dist/OHBPopup.app/Contents/Info.plist
