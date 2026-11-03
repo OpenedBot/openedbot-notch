@@ -36,7 +36,7 @@ jobs:
         run: swift test
       - name: Bundle (ad hoc, as the desktop release builds it)
         env:
-          OHB_NOTCH_ADHOC: "1"
+          OPENEDBOT_NOTCH_ADHOC: "1"
         run: |
           make bundle
           codesign --verify --strict --verbose=2 dist/OHBPopup.app

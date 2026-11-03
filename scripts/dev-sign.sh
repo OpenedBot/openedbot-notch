@@ -12,13 +12,13 @@ set -euo pipefail
 
 target="${1:?usage: dev-sign.sh <binaire ou .app>}"
 
-# OHB_NOTCH_ADHOC=1 : signature ad hoc, sans trousseau ni certificat. C'est le
+# OPENEDBOT_NOTCH_ADHOC=1 : signature ad hoc, sans trousseau ni certificat. C'est le
 # cas de la CI qui construit le bundle embarqué dans l'app desktop
 # (OpenedBot/openedbot, workflow desktop-release) : le runner n'a pas de
 # session pour approuver un certificat, et electron-builder re-signe ensuite
 # l'app entière en ad hoc. Le trousseau de la machine ne garde pas la session
 # d'un build à l'autre : réservé à la CI.
-if [[ "${OHB_NOTCH_ADHOC:-}" == "1" ]]; then
+if [[ "${OPENEDBOT_NOTCH_ADHOC:-}" == "1" ]]; then
   codesign --force --sign - --identifier OHBPopup "$target"
   exit 0
 fi
