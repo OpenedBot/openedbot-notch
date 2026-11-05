@@ -203,6 +203,21 @@ struct SnapshotExportTests {
         try shoot("snap-island-busy-10", IslandCompactView(model: model, geometry: island, compact: busy, flash: nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
                   size: CGSize(width: 420, height: 60))
+        // YOLO : le badge et son compte à rebours dans l'état compact, le bandeau et sa coupure dans le panneau.
+        model.yolo.leases = [YoloLease(id: "l1", scope: .bot, botID: "support", expiresAt: Date().addingTimeInterval(754)),
+                             YoloLease(id: "l2", scope: .thread, botID: "ops", expiresAt: Date().addingTimeInterval(120))]
+        var yoloBusy = busy
+        yoloBusy.yolo = true
+        try shoot("snap-island-yolo", IslandCompactView(model: model, geometry: island, compact: yoloBusy, flash: nil)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
+                  size: CGSize(width: 900, height: 60))
+        model.yolo.killError = tr("Only an owner or admin of the organization can turn YOLO off.",
+                                  "Seuls les propriétaires et administrateurs de l'organisation peuvent couper YOLO.")
+        try shoot("snap-island-panel-yolo", IslandPanelView(model: model, geometry: island, onOpenDialog: { _ in }, onSettings: {},
+                                                            onRespond: { _, _, _ in })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
+                  size: CGSize(width: 520, height: 820))
+        model.yolo = YoloState()
         try SessionKeychain(service: TestSupport.keychainService, legacyService: nil).delete(origin: account.origin!)
     }
 }

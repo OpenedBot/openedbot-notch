@@ -57,6 +57,8 @@ final class NotchModel {
     var feedState: FeedState?
     /// Le runtime de l'organisation (`GET /api/runtime`) ; nil en démo, où l'on lit celui des bots.
     var runtime: RuntimeStatus?
+    /// Les baux YOLO actifs de l'organisation (`YoloMonitor`) ; vide en démo et sans session.
+    var yolo = YoloState()
     /// Le journal en direct : réglages › Journal et la carte du runtime le lisent.
     var journal = Journal()
     /// Le catalogue de modèles du runtime, pour la puce de la fenêtre d'agent.
