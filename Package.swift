@@ -6,15 +6,15 @@ let package = Package(
     platforms: [.macOS(.v15)],
     targets: [
         .executableTarget(
-            name: "OHBPopup",
-            path: "Sources/OHBPopup",
+            name: "OpenedbotPopup",
+            path: "Sources/OpenedbotPopup",
             resources: [.copy("../../Resources/bots"), .copy("../../Resources/faces"), .copy("../../Resources/brand-marks.json")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
-            name: "OHBPopupTests",
-            dependencies: ["OHBPopup"],
-            path: "Tests/OHBPopupTests",
+            name: "OpenedbotPopupTests",
+            dependencies: ["OpenedbotPopup"],
+            path: "Tests/OpenedbotPopupTests",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

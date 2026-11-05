@@ -54,9 +54,9 @@ An interactive HTML mockup of the design lives in [`design/index.html`](design/i
 ## Quick start
 
 ```sh
-make dev     # swift run OHBPopup (fastest loop, no .app bundle)
+make dev     # swift run OpenedbotPopup (fastest loop, no .app bundle)
 make test    # swift test
-make run     # release build, bundle dist/OHBPopup.app, open it
+make run     # release build, bundle dist/OpenedbotPopup.app, open it
 ```
 
 `make build` / `make bundle` sign the binary with a local self-signed identity created by
@@ -67,9 +67,9 @@ menu bar item.
 
 | Command | What it does |
 |---|---|
-| `make dev` | `swift run OHBPopup`, no `.app` bundle |
+| `make dev` | `swift run OpenedbotPopup`, no `.app` bundle |
 | `make build` | Release build, signed with the local dev identity |
-| `make bundle` | Build `dist/OHBPopup.app` |
+| `make bundle` | Build `dist/OpenedbotPopup.app` |
 | `make run` | Bundle and open the app |
 | `make test` | `swift test` |
 | `make clean` | Remove build artefacts |
@@ -85,7 +85,7 @@ This path is experimental and not guaranteed to work against current servers.
 
 openedbot's YOLO mode issues signed, time-limited leases that auto-approve a bot's writes on the
 host. When signed in (standalone or hosted), the notch reads them with the same client as the
-feed (bearer token, `X-OHB-Organization`, one replay after a 401) and shows them in the island:
+feed (bearer token, `X-OpenedBot-Organization`, one replay after a 401) and shows them in the island:
 
 - **Compact island**: a red `YOLO` badge and the time left (`m:ss`, `h:mm:ss` past an hour) as
   soon as one lease is active, even with no bot working.
@@ -101,7 +101,7 @@ The contract the notch reads (the reference is `apps/desktop/README.md` in Opene
 | `GET /api/organization/yolo/leases` | Polled every 30 s, and again just after the soonest `expiresAt`. `404`: the server has no YOLO, nothing shown. Other failures keep the last known leases (minus the expired ones) rather than hiding YOLO. |
 | `POST /api/organization/yolo/kill` | Body `{}`, response body ignored. Success clears the badge, then the leases are read again: the server has the last word. |
 
-Lease parsing is tolerant (`Sources/OHBPopup/Model/Yolo.swift`):
+Lease parsing is tolerant (`Sources/OpenedbotPopup/Model/Yolo.swift`):
 
 - The response is `{ "leases": [...] }`, `{ "items": [...] }` or a bare array; an element that is
   not an object is skipped, not the whole response.
@@ -119,7 +119,7 @@ Lease parsing is tolerant (`Sources/OHBPopup/Model/Yolo.swift`):
 
 The demo (signed out) never shows YOLO. The hosted-mode protocol is unchanged.
 
-The executable and module are still named `OHBPopup` internally (bundle id
+The executable and module are still named `OpenedbotPopup` internally (bundle id
 `app.openedbot.popup`), because the openedbot desktop app embeds the bundle under that name and
 launches it with `--hosted`.
 
@@ -130,10 +130,10 @@ a checkout next to its own, `../openedbot-notch` from its root (`NOTCH_DIR=/path
 otherwise):
 
 ```sh
-make bundle    # dist/OHBPopup.app, with OHBHostedProtocol 1 in its Info.plist
+make bundle    # dist/OpenedbotPopup.app, with OpenedbotHostedProtocol 1 in its Info.plist
 ```
 
-The hosted-mode protocol (`Sources/OHBPopup/Host/HostProtocol.swift`) mirrors
+The hosted-mode protocol (`Sources/OpenedbotPopup/Host/HostProtocol.swift`) mirrors
 [`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts),
 which is the reference: change both sides together.
 
@@ -153,7 +153,7 @@ OPENEDBOT_SNAPSHOT_DIR=/tmp/notch-ui swift test --filter Snapshot  # render view
 ## Project structure
 
 ```text
-Sources/OHBPopup
+Sources/OpenedbotPopup
 ├── App/     entry point, app delegate, menu bar, settings pages
 ├── Auth/    native sign-in client, Keychain session, token sources
 ├── Design/  metrics, palette, typography, Markdown rendering
@@ -161,7 +161,7 @@ Sources/OHBPopup
 ├── Host/    hosted-mode stdio protocol
 ├── Model/   domain models, geometry, layout rules, mock feed
 └── Notch/   notch panel, rings, cards, agent window
-Tests/OHBPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases)
+Tests/OpenedbotPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases)
 Resources/            Info.plist, bot artworks, faces, provider marks
 design/               static HTML mockup
 ```
