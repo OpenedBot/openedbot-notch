@@ -1,4 +1,4 @@
-APP      := OHBPopup
+APP      := OpenedbotPopup
 DIST     := dist/$(APP).app
 BIN      := .build/release/$(APP)
 
@@ -17,7 +17,7 @@ bundle: build
 	cp $(BIN) $(DIST)/Contents/MacOS/$(APP)
 	cp Resources/Info.plist $(DIST)/Contents/
 	mkdir -p $(DIST)/Contents/Resources
-	cp -R .build/release/openedbot-notch_OHBPopup.bundle $(DIST)/Contents/Resources/
+	cp -R .build/release/openedbot-notch_OpenedbotPopup.bundle $(DIST)/Contents/Resources/
 	scripts/dev-sign.sh $(DIST)
 
 run: bundle

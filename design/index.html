@@ -193,10 +193,10 @@
     <pre class="ascii">
    openedbot API                                          openedbot notch (macOS, Swift)
    ┌──────────────────────────────────┐                 ┌───────────────────────────────────┐
-   │ POST /api/auth/native/authorize  │ ◀── PKCE ────── │ OHBotAuth  (callback 127.0.0.1:47813) │
+   │ POST /api/auth/native/authorize  │ ◀── PKCE ────── │ OpenedbotAuth  (callback 127.0.0.1:47813) │
    │ POST /api/auth/native/token      │ ──▶ bearer ───▶ │ access 15 min · refresh 30 j, Keychain│
    │                                  │                 │                                   │
-   │ GET  /api/bots      (RosterDto)  │ ──────────────▶ │ OHBotFeed : BotFeed               │
+   │ GET  /api/bots      (RosterDto)  │ ──────────────▶ │ OpenedbotFeed : BotFeed               │
    │ GET  /api/inbox     (counts)     │ ──────────────▶ │   bots → Bot (anneau, carte)      │
    │ GET  /api/runtime/list           │ ──────────────▶ │   runs → BotRun (étape, état)     │
    │ GET  /api/events    (SSE, cursor)│ ═══ flux ═════▶ │   inbox → badge, carte            │
@@ -235,7 +235,7 @@
       <tr><td>Incident fournisseur <code>quota</code> / <code>auth</code></td><td>Anneau atténué, ligne « fournisseur en incident jusqu'à 16:13 » dans la carte</td><td>API runtime</td></tr>
       <tr><td>Routine (<code>nextRunAt</code>, <code>missedCount</code>)</td><td>Ligne « Routine · Veille infra · prochain passage dans 2 h 18 »</td><td><code>GET /api/bots/:id/routines</code></td></tr>
       <tr><td>Préférence <code>notifyOnFinish</code></td><td>Décide si la fin d'un run est annoncée pour ce bot</td><td><code>BotDto</code></td></tr>
-      <tr><td>Organisation (<code>X-OHB-Organization</code>)</td><td>Sélecteur dans les réglages ; une encoche par organisation active</td><td>Auth native</td></tr>
+      <tr><td>Organisation (<code>X-OpenedBot-Organization</code>)</td><td>Sélecteur dans les réglages ; une encoche par organisation active</td><td>Auth native</td></tr>
     </table>
   </div>
 </section>

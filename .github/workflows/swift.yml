@@ -39,5 +39,5 @@ jobs:
           OPENEDBOT_NOTCH_ADHOC: "1"
         run: |
           make bundle
-          codesign --verify --strict --verbose=2 dist/OHBPopup.app
-          /usr/libexec/PlistBuddy -c 'Print :OHBHostedProtocol' dist/OHBPopup.app/Contents/Info.plist
+          codesign --verify --strict --verbose=2 dist/OpenedbotPopup.app
+          /usr/libexec/PlistBuddy -c 'Print :OpenedbotHostedProtocol' dist/OpenedbotPopup.app/Contents/Info.plist

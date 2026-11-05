@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>openedbot notch</string>
 	<key>CFBundleExecutable</key>
-	<string>OHBPopup</string>
+	<string>OpenedbotPopup</string>
 	<key>CFBundleIdentifier</key>
 	<string>app.openedbot.popup</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -28,7 +28,7 @@
 	<string>Pour lire la position des éléments du Dock et poser la pilule juste après la Corbeille.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>OHBHostedProtocol</key>
+	<key>OpenedbotHostedProtocol</key>
 	<integer>1</integer>
 </dict>
 </plist>

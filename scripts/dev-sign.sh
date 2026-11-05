@@ -7,7 +7,7 @@
 # tient d'un build à l'autre.
 #
 # L'identité est auto-signée, rangée dans un trousseau dédié (pas dans « session ») dont le
-# mot de passe aléatoire est gardé en 0600 sous ~/.config/ohb-notch. Elle ne signe que cette app.
+# mot de passe aléatoire est gardé en 0600 sous ~/.config/openedbot-notch. Elle ne signe que cette app.
 set -euo pipefail
 
 target="${1:?usage: dev-sign.sh <binaire ou .app>}"
@@ -19,13 +19,13 @@ target="${1:?usage: dev-sign.sh <binaire ou .app>}"
 # l'app entière en ad hoc. Le trousseau de la machine ne garde pas la session
 # d'un build à l'autre : réservé à la CI.
 if [[ "${OPENEDBOT_NOTCH_ADHOC:-}" == "1" ]]; then
-  codesign --force --sign - --identifier OHBPopup "$target"
+  codesign --force --sign - --identifier OpenedbotPopup "$target"
   exit 0
 fi
 
-name="OHB Notch Dev"
-dir="$HOME/.config/ohb-notch"
-keychain="$HOME/Library/Keychains/ohb-notch-dev.keychain-db"
+name="openedbot Notch Dev"
+dir="$HOME/.config/openedbot-notch"
+keychain="$HOME/Library/Keychains/openedbot-notch-dev.keychain-db"
 passfile="$dir/dev-keychain-pass"
 
 mkdir -p "$dir"
@@ -55,9 +55,9 @@ if [[ ! -f "$keychain" ]]; then
 fi
 
 # codesign ne trouve une identité que dans un trousseau de la liste de recherche.
-if ! security list-keychains -d user | grep -q "ohb-notch-dev.keychain-db"; then
+if ! security list-keychains -d user | grep -q "openedbot-notch-dev.keychain-db"; then
   # shellcheck disable=SC2046
   security list-keychains -d user -s $(security list-keychains -d user | tr -d '"') "$keychain"
 fi
 security unlock-keychain -p "$(cat "$passfile")" "$keychain"
-codesign --force --sign "$name" --keychain "$keychain" --identifier OHBPopup "$target"
+codesign --force --sign "$name" --keychain "$keychain" --identifier OpenedbotPopup "$target"
