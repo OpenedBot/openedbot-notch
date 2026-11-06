@@ -29,6 +29,14 @@ final class OpenedbotFeed: BotFeed {
     private var seen: Set<String> = []
     /// Les fils qu'on relit à chaque rafraîchissement : ouverts dans une fenêtre, ou actifs.
     var openThreads: Set<String> = []
+    /// Les fils que la session avait chargés avant la démonstration : relus à chaque relecture
+    /// jusqu'à ce que chacun ait été lu une fois (ou que son bot ait quitté le roster), pour qu'une
+    /// réponse arrivée pendant elle s'annonce même si la première relecture échoue.
+    var catchUpThreads: Set<String> = []
+    /// Les bots qui travaillaient quand la démonstration a pris l'encoche. La relecture après elle part
+    /// d'un roster vide et ne compare rien : un run fini ou échoué entre-temps s'annonce contre eux, une
+    /// fois, dès que le fil du bot a pu être relu (sans ses runs, on ne sait pas s'il a fini ou échoué).
+    var resumeBaseline: [String: Bot] = [:]
 
     /// Le rythme ; les tests le resserrent.
     struct Timing: Sendable {
@@ -75,18 +83,34 @@ final class OpenedbotFeed: BotFeed {
         self.timing = timing
     }
 
+    /// Change à chaque `stop()` : une relecture lancée avant ne touche plus au modèle, que la
+    /// démonstration ou un autre flux occupe peut-être déjà.
+    private var generation = 0
+    /// Arrêté par `stop()` : une action encore en vol (envoi, réponse, réaction) ne relance plus
+    /// de relecture.
+    private var stopped = false
+    /// Le flux d'événements tourne.
+    var isStreaming: Bool { streamTask != nil }
+    /// Un roster vient d'être relu et posé dans le modèle, vide compris.
+    var onRosterLoaded: (() -> Void)?
+    /// Les images servies avec la session ; une instance à part dans les tests.
+    var images = RemoteImages.shared
+
     // MARK: BotFeed
 
     func start() {
         stop()
+        stopped = false
         let api = self.api
-        RemoteImages.shared.loader = { path in try await api.data(path) }
+        images.loader = { path in try await api.data(path) }
         setState(.connecting)
         model.bots = []
         model.sections = []
         mainTask = Task { [weak self] in
             guard let self else { return }
             await refresh(threads: [])
+            // Arrêté pendant la première relecture : pas de flux d'événements orphelin.
+            guard !Task.isCancelled else { return }
             streamTask = Task { [weak self] in await self?.streamForever() }
             while !Task.isCancelled {
                 try? await Task.sleep(for: timing.poll)
@@ -97,34 +121,41 @@ final class OpenedbotFeed: BotFeed {
     }
 
     func stop() {
+        // Une relecture en vol (ses réponses déjà là, l'annulation n'y peut plus rien) n'écrira plus.
+        generation += 1
+        stopped = true
         mainTask?.cancel(); mainTask = nil
         streamTask?.cancel(); streamTask = nil
         refreshTask?.cancel(); refreshTask = nil
-        RemoteImages.shared.loader = nil
-        RemoteImages.shared.reset()
+        images.loader = nil
+        images.reset()
         setState(nil)
     }
 
     func respond(approvalID: UUID, allow: Bool) {
         guard let bot = model.bots.first(where: { $0.pending?.id == approvalID }), let remote = bot.pending?.remoteID else { return }
         struct Body: Encodable { var choice: String }
+        let started = generation
         Task { [weak self] in
             guard let self else { return }
             do {
                 let _: OpenedbotAPI.Empty = try await api.post("/api/approvals/\(remote)/respond", json: Body(choice: allow ? "once" : "deny"))
+                guard started == generation else { return }
                 note(.info, .send, allow ? tr("\(bot.name): approval allowed once", "\(bot.name) : approbation autorisée une fois")
                                           : tr("\(bot.name): approval denied", "\(bot.name) : approbation refusée"))
                 model.update(bot.id) { b in
-                    b.pending = nil
+                    if b.pending?.id == approvalID { b.pending = nil }
                     b.thread.append(ChatMessage(role: .system, text: allow ? tr("Allowed once", "Autorisé une fois") : tr("Denied", "Refusé")))
                 }
             } catch OpenedbotAuthError.http(409, let code) {
+                guard started == generation else { return }
                 // Déjà tranchée, expirée ou run fini : on retire la carte, le serveur a raison.
                 model.update(bot.id) { b in
-                    b.pending = nil
+                    if b.pending?.id == approvalID { b.pending = nil }
                     b.thread.append(ChatMessage(role: .system, text: Self.conflictText(code)))
                 }
             } catch {
+                guard started == generation else { return }
                 note(.error, .send, tr("\(bot.name): approval response rejected: \(Self.text(error))",
                                          "\(bot.name) : réponse à l'approbation refusée : \(Self.text(error))"))
                 model.update(bot.id) { b in b.thread.append(ChatMessage(role: .system, text: tr("Response not sent: \(Self.text(error))", "Réponse non envoyée : \(Self.text(error))"))) }
@@ -141,12 +172,14 @@ final class OpenedbotFeed: BotFeed {
         let body = Body(input: trimmed, attachments: attachments.isEmpty ? nil : attachments.map(\.wire), replyToId: replyTo)
         let key = UUID().uuidString.lowercased()
         model.update(botID) { b in b.thread.append(ChatMessage(role: .user, text: trimmed, attachments: attachments.map(\.name))) }
+        let generation = self.generation
         Task { [weak self] in
             guard let self else { return }
             do {
                 let started = Date()
                 let accepted: SendMessageAcceptedDto = try await api.post("/api/threads/\(thread)/messages", json: body,
                                                                            headers: ["Idempotency-Key": key])
+                guard generation == self.generation else { return }
                 let pieces = attachments.isEmpty ? "" : tr(" with \(attachments.count) attachment\(attachments.count > 1 ? "s" : "")",
                                                             " avec \(attachments.count) pièce\(attachments.count > 1 ? "s" : "")")
                 note(.info, .send, tr("\(bot.name): message accepted\(pieces), run \(Self.short(accepted.runId)) (\(Self.ms(since: started)))",
@@ -158,6 +191,7 @@ final class OpenedbotFeed: BotFeed {
                     }
                 }
             } catch {
+                guard generation == self.generation else { return }
                 let total = attachments.reduce(0) { $0 + $1.bytes }
                 let pieces = attachments.isEmpty ? "" : tr(" (\(attachments.count) attachment\(attachments.count > 1 ? "s" : ""), \(total) bytes)",
                                                             " (\(attachments.count) pièce\(attachments.count > 1 ? "s" : ""), \(total) octets)")
@@ -177,6 +211,7 @@ final class OpenedbotFeed: BotFeed {
         model.update(botID) { b in b.conversation?.messages[i].reactions = next.reactions }
         struct Body: Encodable { var emoji: String }
         let path = "/api/threads/\(thread)/messages/\(messageID)/reactions"
+        let started = generation
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -187,6 +222,7 @@ final class OpenedbotFeed: BotFeed {
                 note(.info, .send, next.added ? tr("\(bot.name): reaction \(emoji) added", "\(bot.name) : réaction \(emoji) ajoutée")
                                                : tr("\(bot.name): reaction \(emoji) removed", "\(bot.name) : réaction \(emoji) retirée"))
             } catch {
+                guard started == generation else { return }
                 note(.error, .send, tr("\(bot.name): reaction \(emoji) rejected: \(Self.text(error))", "\(bot.name) : réaction \(emoji) refusée : \(Self.text(error))"))
                 model.update(botID) { b in
                     if let j = b.conversation?.messages.firstIndex(where: { $0.id == messageID }) { b.conversation?.messages[j].reactions = before }
@@ -200,12 +236,15 @@ final class OpenedbotFeed: BotFeed {
 
     /// Roster + runtime + inbox, puis les snapshots des fils demandés et des bots actifs.
     func refresh(threads requested: Set<String>) async {
+        guard !stopped else { return }
         let now = Date()
+        let started = generation
         do {
             async let rosterCall: RosterDto = api.get("/api/bots")
             async let runtimeCall: RuntimeConfigurationDto? = fetchRuntime()
             async let inboxCall: InboxDto = api.get("/api/inbox", query: ["limit": "200"])
             let (roster, runtimeDto, inbox) = try await (rosterCall, runtimeCall, inboxCall)
+            guard started == generation else { return }
             if let runtimeDto {
                 runtime = runtimeDto
                 applyRuntime(runtimeDto)
@@ -214,6 +253,7 @@ final class OpenedbotFeed: BotFeed {
 
             if routinesLoadedAt.map({ now.timeIntervalSince($0) > timing.routinesEvery }) ?? true {
                 await loadRoutines(for: roster.bots.map(\.id), now: now)
+                guard started == generation else { return }
             }
 
             let previous = Dictionary(model.bots.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -236,11 +276,15 @@ final class OpenedbotFeed: BotFeed {
             model.sections = roster.sections.sorted { ($0.position ?? 0) < ($1.position ?? 0) }.map { BotSection(id: $0.id, name: $0.name) }
 
             // Les fils à relire : demandés, ouverts, actifs, ou avec une approbation dont on n'a pas la commande.
-            var threads = requested.union(openThreads)
+            catchUpThreads.formIntersection(bots.compactMap(\.threadID))
+            var threads = requested.union(openThreads).union(catchUpThreads)
             for dto in roster.bots where dto.running == true || dto.awaitingApproval == true { threads.insert(dto.threadId) }
             for bot in bots where previous[bot.id]?.runs.contains(where: \.isLive) == true { threads.insert(bot.threadID ?? "") }
+            for bot in bots where resumeBaseline[bot.id] != nil { threads.insert(bot.threadID ?? "") }
             threads.remove("")
             let snapshots = await fetchSnapshots(threads)
+            guard started == generation else { return }
+            catchUpThreads.subtract(snapshots.keys)
 
             for i in bots.indices {
                 guard let thread = bots[i].threadID else { continue }
@@ -272,15 +316,37 @@ final class OpenedbotFeed: BotFeed {
             }
 
             announceTransitions(from: previous, to: bots)
+            if !resumeBaseline.isEmpty {
+                // Seulement contre un fil relu : sans ses runs, le bot paraît au repos alors que le run
+                // tourne peut-être encore, ou a échoué. Le fil illisible est retenté à la relecture suivante.
+                for bot in bots {
+                    guard let old = resumeBaseline[bot.id], let thread = bot.threadID, snapshots[thread] != nil else { continue }
+                    resumeBaseline[bot.id] = nil
+                    if let ended = Self.runEnd(from: old, to: bot) { onTransition?(bot, ended) }
+                }
+                let waiting = Set(bots.compactMap { $0.threadID != nil ? $0.id : nil })
+                resumeBaseline = resumeBaseline.filter { waiting.contains($0.key) }
+            }
             model.bots = bots
+            // Les images importées se chargent dès le roster : l'encoche réduite n'en montre que trois,
+            // le menu de la barre se fige à l'ouverture ; aucune surface ne doit attendre la sienne.
+            for bot in bots {
+                if case .uploaded(let path) = AvatarSource.resolve(seed: bot.id, face: bot.avatarFace) {
+                    images.load(path, maxPixels: Avatars.thumbnailPixels)
+                }
+            }
+            onRosterLoaded?()
             note(.info, .api, tr("refresh: \(bots.count) bots, \(snapshots.count) thread\(snapshots.count > 1 ? "s" : ""), cursor \(cursor) (\(Self.ms(since: now)))",
                                  "relecture : \(bots.count) bots, \(snapshots.count) fil\(snapshots.count > 1 ? "s" : ""), curseur \(cursor) (\(Self.ms(since: now)))"),
                  key: "refresh")
         } catch OpenedbotAuthError.cancelled {
         } catch OpenedbotAuthError.http(let status, let code) where status == 401 || status == 403 {
+            // Un échec qui revient après l'arrêt ne parle plus pour ce qui occupe le modèle.
+            guard started == generation else { return }
             setState(.failed(OpenedbotAuthError.http(status: status, code: code).userMessage))
             streamTask?.cancel(); streamTask = nil
         } catch {
+            guard started == generation else { return }
             note(.error, .api, tr("refresh failed: \(Self.text(error))", "relecture échouée : \(Self.text(error))"), key: "refresh-error")
             if model.feedState != .live { setState(.retrying(Self.text(error))) }
         }
@@ -293,12 +359,14 @@ final class OpenedbotFeed: BotFeed {
     /// Le catalogue du runtime actif, gardé 30 s comme le cache serveur.
     func loadModelCatalog() async {
         if let at = catalogLoadedAt, Date().timeIntervalSince(at) < 30, model.modelCatalog != nil { return }
+        let started = generation
         var current = runtime
         if current == nil { current = await fetchRuntime() }
-        guard let r = current, let id = r.runtime?.id else { return }
+        guard started == generation, let r = current, let id = r.runtime?.id else { return }
         runtime = r
         do {
             let dto: RuntimeModelCatalogDto = try await api.get("/api/runtimes/\(id)/models")
+            guard started == generation else { return }
             model.modelCatalog = OpenedbotMapping.catalog(dto, runtime: r)
             catalogLoadedAt = Date()
         } catch {
@@ -311,9 +379,13 @@ final class OpenedbotFeed: BotFeed {
         struct Body: Encodable { var model: String?; var provider: String?; var reasoningEffort: String? }
         struct Mode: Encodable { var mode: String }
         let provider = modelID.flatMap { model.modelCatalog?.provider(of: $0)?.slug }
+        let started = generation
         let _: OpenedbotAPI.Empty = try await api.post("/api/bots/\(botID)", json: Body(model: modelID, provider: provider, reasoningEffort: effort), method: "PATCH")
+        // Le flux arrêté entre-temps (la démonstration) : le modèle n'est plus le sien.
+        guard started == generation else { return }
         if model.modelCatalog?.assignmentMode == "global", modelID != nil || effort != nil {
             let _: OpenedbotAPI.Empty = try await api.post("/api/runtimes/assignment-mode", json: Mode(mode: "per_bot"), method: "PUT")
+            guard started == generation else { return }
             model.modelCatalog?.assignmentMode = "per_bot"
         }
         model.update(botID) { b in
@@ -403,12 +475,16 @@ final class OpenedbotFeed: BotFeed {
             guard let old = previous[bot.id] else { continue }
             if old.runtime.connected != bot.runtime.connected { onTransition?(bot, bot.runtime.connected ? .back : .offline); continue }
             if bot.activity == .waiting, old.activity != .waiting { onTransition?(bot, .waiting); continue }
-            if old.activity == .working, bot.activity == .success || bot.activity == .idle {
-                // Le run suivi a-t-il échoué ? Une erreur ne s'annonce pas comme un run fini.
-                let failed = old.activeRun.flatMap { run in bot.runs.first { $0.id == run.id } }?.status == .failed
-                onTransition?(bot, failed ? .failed : .finished)
-            }
+            if let ended = Self.runEnd(from: old, to: bot) { onTransition?(bot, ended) }
         }
+    }
+
+    /// Un bot qui travaillait et ne travaille plus : son run a fini, ou échoué (une erreur ne
+    /// s'annonce pas comme un run fini).
+    private static func runEnd(from old: Bot, to bot: Bot) -> FeedTransition? {
+        guard old.activity == .working, bot.activity == .success || bot.activity == .idle else { return nil }
+        let failed = old.activeRun.flatMap { run in bot.runs.first { $0.id == run.id } }?.status == .failed
+        return failed ? .failed : .finished
     }
 
     // MARK: Flux

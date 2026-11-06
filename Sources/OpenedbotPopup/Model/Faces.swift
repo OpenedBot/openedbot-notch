@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
 /// Les visages bloub de la console au repos (`Resources/faces`, exportés depuis la console openedbot
@@ -51,37 +52,82 @@ enum BloubFaces {
 
 /// Les images servies par l'API avec la session (`/api/attachments/:id`) : avatars importés, pièces jointes.
 /// Le flux openedbot pose le chargeur ; en démo il n'y en a pas et rien ne se charge.
+///
+/// Une image se demande à une taille : `maxPixels` nil la garde entière (pièce jointe), sinon elle est
+/// décodée en vignette hors du fil principal (avatar). La clé est le chemin, qui change quand le bot
+/// change d'image (une pièce jointe ne change jamais d'octets) : l'ancienne n'est simplement plus lue.
 @MainActor @Observable
 final class RemoteImages {
     static let shared = RemoteImages()
+    /// Après un échec, on retente au plus tôt après ce délai : une coupure passagère ne fige pas le repli.
+    static let retryAfter: TimeInterval = 30
     @ObservationIgnored var loader: (@MainActor (String) async throws -> Data)?
     private(set) var images: [String: NSImage] = [:]
-    private(set) var failures: Set<String> = []
+    private(set) var failures: [String: Date] = [:]
     @ObservationIgnored private var inflight: Set<String> = []
+    /// Monte à chaque `reset` : une réponse demandée pour l'ancienne session ne s'écrit plus.
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored var now: () -> Date = Date.init
 
-    func image(_ path: String) -> NSImage? { images[path] }
-    func failed(_ path: String) -> Bool { failures.contains(path) }
+    private static func key(_ path: String, _ maxPixels: Int?) -> String {
+        maxPixels.map { "\(path)#\($0)" } ?? path
+    }
 
-    func load(_ path: String) {
-        guard images[path] == nil, !failures.contains(path), !inflight.contains(path), let loader else { return }
-        inflight.insert(path)
+    func image(_ path: String, maxPixels: Int? = nil) -> NSImage? { images[Self.key(path, maxPixels)] }
+    func failed(_ path: String, maxPixels: Int? = nil) -> Bool { failures[Self.key(path, maxPixels)] != nil }
+
+    func load(_ path: String, maxPixels: Int? = nil) {
+        let key = Self.key(path, maxPixels)
+        guard images[key] == nil, !inflight.contains(key), let loader else { return }
+        if let failedAt = failures[key], now().timeIntervalSince(failedAt) < Self.retryAfter { return }
+        inflight.insert(key)
+        let generation = self.generation
         Task {
-            defer { inflight.remove(path) }
+            let image: NSImage?
             do {
                 let data = try await loader(path)
-                guard let image = NSImage(data: data) else { throw CocoaError(.fileReadCorruptFile) }
-                images[path] = image
+                image = try await Self.decode(data, maxPixels: maxPixels)
             } catch {
-                failures.insert(path)
+                image = nil
+            }
+            guard generation == self.generation else { return }
+            inflight.remove(key)
+            if let image {
+                images[key] = image
+                failures[key] = nil
+            } else {
+                failures[key] = now()
             }
         }
     }
 
-    func reset() { images.removeAll(); failures.removeAll() }
+    /// Une vignette se décode hors du fil principal ; une image entière reste paresseuse (`NSImage(data:)`).
+    private static func decode(_ data: Data, maxPixels: Int?) async throws -> NSImage {
+        guard let maxPixels else {
+            guard let image = NSImage(data: data) else { throw CocoaError(.fileReadCorruptFile) }
+            return image
+        }
+        let thumbnail = await Task.detached(priority: .userInitiated) { () -> Thumbnail? in
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let cg = Avatars.thumbnail(source: source, maxPixels: maxPixels) else { return nil }
+            return Thumbnail(image: cg)
+        }.value
+        guard let cg = thumbnail?.image else { throw CocoaError(.fileReadCorruptFile) }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+
+    private struct Thumbnail: @unchecked Sendable { let image: CGImage }
+
+    func reset() {
+        generation += 1
+        images.removeAll()
+        failures.removeAll()
+        inflight.removeAll()
+    }
 }
 
-/// Le visage d'un bot comme `BotFace` dans la console : image importée, illustration du catalogue,
-/// visage bloub, illustration tirée de l'identifiant si l'API n'en donne aucun, initiale en dernier recours.
+/// Le visage d'un bot comme `BotFace` dans la console (`AvatarSource`) : image importée, illustration
+/// du catalogue, visage bloub. L'initiale ne sert que si rien de cela ne se dessine.
 struct FaceView: View {
     let seed: String
     let name: String
@@ -93,29 +139,43 @@ struct FaceView: View {
         self.seed = seed; self.name = name; self.face = face; self.size = size
     }
 
-    private var catalogArtwork: String? {
-        if let a = face?.artwork, !a.isEmpty, !a.hasPrefix("/") { return a }
-        return face == nil ? OpenedbotMapping.defaultArtwork(for: seed) : nil
+    var body: some View {
+        switch AvatarSource.resolve(seed: seed, face: face) {
+        case .uploaded(let path):
+            uploaded(path)
+        case .artwork(let artwork):
+            if let image = Avatars.image(for: artwork) {
+                let portrait = Avatars.portraits.contains(artwork)
+                Image(nsImage: image).resizable().interpolation(.high)
+                    .aspectRatio(contentMode: portrait ? .fill : .fit)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: portrait ? size * 0.3 : 0, style: .continuous))
+            } else {
+                initial
+            }
+        case .bloub(let face):
+            bloub(face)
+        }
     }
 
-    var body: some View {
-        if let path = face?.artwork, path.hasPrefix("/api/") {
-            Group {
-                if let image = remote.image(path) {
-                    Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
-                } else {
-                    initial
-                }
+    /// L'image importée, ronde et remplie comme dans la console ; un disque discret pendant le
+    /// chargement, le visage bloub de la fiche si elle ne se charge pas.
+    private func uploaded(_ path: String) -> some View {
+        Group {
+            if let image = remote.image(path, maxPixels: Avatars.thumbnailPixels) {
+                Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size).clipShape(Circle())
+            } else if remote.failed(path, maxPixels: Avatars.thumbnailPixels) {
+                bloub(AvatarSource.uploadFallback(face))
+            } else {
+                Circle().fill(.white.opacity(0.1)).frame(width: size, height: size)
             }
-            .frame(width: size, height: size).clipShape(Circle())
-            .task(id: path) { remote.load(path) }
-        } else if let artwork = catalogArtwork, let image = Avatars.image(for: artwork) {
-            let portrait = Avatars.portraits.contains(artwork)
-            Image(nsImage: image).resizable().interpolation(.high)
-                .aspectRatio(contentMode: portrait ? .fill : .fit)
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: portrait ? size * 0.3 : 0, style: .continuous))
-        } else if let face, let image = BloubFaces.image(face, seed: seed) {
+        }
+        .task(id: path) { remote.load(path, maxPixels: Avatars.thumbnailPixels) }
+    }
+
+    @ViewBuilder private func bloub(_ face: BotFace) -> some View {
+        if let image = BloubFaces.image(face, seed: seed) {
             Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
         } else {

@@ -19,24 +19,27 @@ enum Island {
         var total = 0
         /// Au moins un bail YOLO actif : le badge et son compte à rebours à droite de la caméra.
         var yolo = false
+        /// Une mise à jour prête ou requise chez l'hôte : le point bleu à droite de la caméra.
+        var update: HostUpdate.Badge?
     }
 
     /// L'île au repos reste lisible, comme Vibe Island : les avatars des bots à gauche de la caméra,
     /// leur nombre et l'état de la connexion à droite. Nil seulement quand aucun bot n'est encore connu.
     /// Bots actifs : ceux-là d'abord ; sinon, une notification non lue : l'avatar de son bot.
-    /// Un bail YOLO actif montre toujours l'île, même sans bot connu.
-    static func compact(bots: [Bot], unread: Int = 0, latestUnreadBotID: String? = nil, yolo: Bool = false) -> Compact? {
+    /// Un bail YOLO actif ou une mise à jour à installer montrent toujours l'île, même sans bot connu.
+    static func compact(bots: [Bot], unread: Int = 0, latestUnreadBotID: String? = nil, yolo: Bool = false,
+                        update: HostUpdate.Badge? = nil) -> Compact? {
         let waiting = bots.filter { $0.activity == .waiting }
         let working = bots.filter { $0.activity == .working }
         let active = waiting + working
         if active.isEmpty, unread == 0 {
-            guard !bots.isEmpty || yolo else { return nil }
+            guard !bots.isEmpty || yolo || update != nil else { return nil }
             return Compact(botIDs: bots.prefix(3).map(\.id), extra: max(0, bots.count - 3),
-                           working: 0, waiting: 0, unread: 0, idle: true, total: bots.count, yolo: yolo)
+                           working: 0, waiting: 0, unread: 0, idle: true, total: bots.count, yolo: yolo, update: update)
         }
         let ids = active.isEmpty ? [latestUnreadBotID].compactMap { $0 } : active.prefix(3).map(\.id)
         return Compact(botIDs: ids, extra: max(0, active.count - 3),
-                       working: working.count, waiting: waiting.count, unread: unread, total: bots.count, yolo: yolo)
+                       working: working.count, waiting: waiting.count, unread: unread, total: bots.count, yolo: yolo, update: update)
     }
 
     /// Un message bref à côté de la caméra, à la place de l'état compact, quelques secondes.
@@ -84,12 +87,16 @@ enum Island {
         if compact.waiting > 0 { items.append(7 + (compact.waiting > 1 || compact.working > 0 ? 3 + digits(compact.waiting) : 0)) }
         if compact.unread > 0 { items.append(10 + 3 + digits(compact.unread)) }
         if compact.yolo { items.append(yoloBadgeWidth) }
+        if compact.update != nil { items.append(updateDotSize) }
         let right = 10 + items.reduce(0, +) + CGFloat(max(0, items.count - 1)) * 7 + 6
         return max(wing, left.rounded(.up), right.rounded(.up))
     }
 
     /// Le badge « YOLO » et son compte à rebours `mm:ss` (la pastille, l'espace, cinq chiffres).
     static let yoloBadgeWidth: CGFloat = 38 + 4 + 42
+
+    /// Le point « mise à jour prête / requise », dernier élément à droite de la caméra.
+    static let updateDotSize: CGFloat = 7
 
     /// Une ligne du panneau déplié.
     struct Row: Identifiable, Equatable, Sendable {

@@ -13,6 +13,25 @@ final class NoticeCenter {
     var isIsland: () -> Bool = { false }
     /// La fenêtre du bot est-elle ouverte ? Sa réponse s'y lit déjà : pas de notification.
     var isDialogOpen: (String) -> Bool = { _ in false }
+    /// La démonstration joue : ses bots sont fictifs, rien d'eux ne devient une notification.
+    var isMuted: () -> Bool = { false }
+
+    /// La boîte de la session, mise de côté le temps de la démonstration.
+    private var setAsideInbox: Inbox?
+    /// Les demandes en attente quand la démonstration a commencé : identité locale → openedbot.
+    private var setAsideApprovals: [UUID: String] = [:]
+    /// Les messages des bots de la session déjà vus quand la démonstration a commencé : une réponse
+    /// arrivée depuis s'annonce au retour, comparée à eux et non aux bots fictifs.
+    private var setAsideMessages: [String: Set<String>] = [:]
+    /// La bannière de la session que la démonstration a interrompue : elle repasse en tête au retour
+    /// si sa notification attend toujours (une demande d'accord encore ouverte, par exemple).
+    private var setAsideBanner: UUID?
+    /// Les messages vus avant la démonstration des bots dont le fil n'est pas encore revenu (sa
+    /// relecture a échoué) : gardés jusqu'à ce qu'il revienne, pour ne pas réannoncer l'ancien.
+    private var catchUpMessages: [String: Set<String>] = [:]
+    /// La démonstration est finie : la boîte de la session reviendra au premier roster du flux qui
+    /// reprend, ses demandes d'accord recalées dessus.
+    private var reconcilesApprovals = false
 
     private var bannerWork: Task<Void, Never>?
     private var readWork: Task<Void, Never>?
@@ -47,6 +66,7 @@ final class NoticeCenter {
 
     /// Une bascule du flux : demande d'accord, run fini ou en échec, runtime tombé ou revenu.
     func transition(_ bot: Bot, _ transition: FeedTransition) {
+        guard !isMuted() else { return }
         let notice: Notice
         switch transition {
         case .waiting:
@@ -80,6 +100,9 @@ final class NoticeCenter {
 
     /// Montre la prochaine bannière si rien ne la retient : île, annonces actives, présent, panneau fermé.
     func pump() {
+        // La boîte rendue après la démonstration attend son recalage : ses demandes d'accord
+        // portent encore l'identité d'avant.
+        guard !reconcilesApprovals else { return }
         guard isIsland(), model.announces, !model.isAway, model.banner == nil, !model.showsBody else { return }
         guard let next = model.inbox.nextBanner() else { return }
         show(.notice(next))
@@ -155,13 +178,75 @@ final class NoticeCenter {
         }
     }
 
+    /// La démonstration commence : la boîte de la session est mise de côté (une fois, même si la
+    /// démonstration est rejouée), avec l'identité openedbot de chaque demande encore en attente.
+    func setAside() {
+        if setAsideInbox == nil {
+            setAsideInbox = model.inbox
+            setAsideApprovals = Self.remoteApprovals(model.bots)
+            // Une démonstration rejouée avant qu'un fil soit revenu garde ce qui avait été vu de lui.
+            setAsideMessages = knownMessages
+            for (id, ids) in catchUpMessages { setAsideMessages[id, default: []].formUnion(ids) }
+            catchUpMessages = [:]
+            if case .notice(let shown) = model.banner { setAsideBanner = shown.id }
+        }
+        reconcilesApprovals = false
+        model.inbox = Inbox()
+        dismissBanner()
+    }
+
+    /// La démonstration est finie. Le flux qui reprend donne de nouvelles identités locales à ses
+    /// demandes d'accord : la boîte de la session ne revient qu'à son premier roster, recalée
+    /// dessus. D'ici là elle reste de côté, à l'abri du ménage des notifications lues.
+    func restore() {
+        guard setAsideInbox != nil else { return }
+        reconcilesApprovals = true
+    }
+
+    /// Le flux de la session a relu son roster (vide compris) et l'a posé dans le modèle.
+    func rosterLoaded() {
+        guard reconcilesApprovals, !isMuted(), var inbox = setAsideInbox else { return }
+        reconcilesApprovals = false
+        setAsideInbox = nil
+        let before = setAsideApprovals
+        let seen = setAsideMessages
+        let interrupted = setAsideBanner
+        setAsideApprovals = [:]
+        setAsideMessages = [:]
+        setAsideBanner = nil
+        var now: [String: UUID] = [:]
+        for (local, remote) in Self.remoteApprovals(model.bots) { now[remote] = local }
+        // La même demande (même identité openedbot) seulement : une autre demande du même bot ne
+        // reprend jamais le texte d'une ancienne.
+        inbox.reconcileApprovals { old in before[old].flatMap { now[$0] } }
+        for notice in model.inbox.notices.reversed() { inbox.add(notice) }
+        if let interrupted { inbox.requeueFirst(interrupted) }
+        model.inbox = inbox
+        // Les réponses arrivées pendant la démonstration, face aux messages vus avant elle ; le
+        // roster est ensuite vu par le centre, pour ne pas les annoncer deux fois.
+        announceReplies(previous: seen, bots: model.bots)
+        snapshot(model.bots)
+        catchUpMessages = seen.filter { id, ids in !ids.isEmpty && model.bots.contains { $0.id == id && $0.conversation == nil } }
+        // Les demandes arrivées pendant la démonstration : annoncées comme le flux l'aurait fait.
+        let known = Set(before.values)
+        for bot in model.bots {
+            if let remote = bot.pending?.remoteID, !known.contains(remote) { transition(bot, .waiting) }
+        }
+        pump()
+    }
+
+    private static func remoteApprovals(_ bots: [Bot]) -> [UUID: String] {
+        var out: [UUID: String] = [:]
+        for bot in bots { if let p = bot.pending, let remote = p.remoteID { out[p.id] = remote } }
+        return out
+    }
+
     private func rosterChanged() {
         let bots = model.bots
-        // Les réponses des bots, une par bot, sauf si sa fenêtre est ouverte.
-        for reply in MessageDiff.replies(previous: knownMessages, bots: bots, since: startedAt) where !isDialogOpen(reply.botID) {
-            let more = reply.count > 1 ? tr(" (+\(reply.count - 1))", " (+\(reply.count - 1))") : ""
-            post(Notice(kind: .message, botID: reply.botID, botName: reply.botName, text: reply.text + more, at: reply.at))
-        }
+        var previous = knownMessages
+        for (id, ids) in catchUpMessages { previous[id, default: []].formUnion(ids) }
+        announceReplies(previous: previous, bots: bots)
+        catchUpMessages = catchUpMessages.filter { id, _ in bots.contains { $0.id == id && $0.conversation == nil } }
         // Une demande d'accord répondue ailleurs (fenêtre, console) : plus de bannière ni de badge.
         for bot in bots {
             if let old = knownApprovals[bot.id], bot.pending?.id != old { resolve(old) }
@@ -188,6 +273,14 @@ final class NoticeCenter {
         if model.systemNotifications != wantedSystem {
             wantedSystem = model.systemNotifications
             if wantedSystem { requestSystemPermission() }
+        }
+    }
+
+    /// Les réponses des bots, une par bot, sauf si sa fenêtre est ouverte.
+    private func announceReplies(previous: [String: Set<String>], bots: [Bot]) {
+        for reply in MessageDiff.replies(previous: previous, bots: bots, since: startedAt) where !isMuted() && !isDialogOpen(reply.botID) {
+            let more = reply.count > 1 ? tr(" (+\(reply.count - 1))", " (+\(reply.count - 1))") : ""
+            post(Notice(kind: .message, botID: reply.botID, botName: reply.botName, text: reply.text + more, at: reply.at))
         }
     }
 

@@ -2,13 +2,34 @@ import Foundation
 
 /// Le protocole hôte ↔ popup, v1 : une ligne JSON par message, de l'hôte sur notre stdin, vers
 /// l'hôte sur notre stdout. Miroir du protocole de l'app bureau openedbot, qui fait foi
-/// (OpenedBot/openedbot, apps/desktop/src/shared/popup-protocol.ts) : changer les deux ensemble.
+/// (OpenedBot/openedbot : apps/desktop-tauri/src-tauri/src/popup.rs, l'hôte Tauri qui envoie
+/// `updateState` ; apps/desktop/src/shared/popup-protocol.ts pour l'ancien shell Electron) :
+/// changer les deux ensemble.
 ///
 /// Règles : une version inconnue arrête la session ; une ligne mal formée est ignorée et
 /// journalisée sans son contenu ; jamais de refresh token sur ce canal ; jamais de jeton dans
-/// un journal. Les champs inconnus sont ignorés, pour qu'une v1 puisse s'enrichir.
+/// un journal. Les champs inconnus sont ignorés, pour qu'une v1 puisse s'enrichir ; un type
+/// inconnu aussi (`.unknownType`, journalisé), pour qu'un hôte plus récent ne casse pas la popup.
+///
+/// Hôte → popup : `hello`, `token`, `signedIn`, `signedOut`, et `updateState`
+/// (`{"type":"updateState","status":"ready","version":"1.0.4"}`) : l'état de la mise à jour de
+/// l'app, envoyé à chaque changement et une fois après `hello` + `signedIn`/`signedOut`. `status`
+/// est un mot en minuscules (`idle`, `checking`, `available`, `downloading`, `ready`, `installing`,
+/// `error`, `required` ; un autre mot ne montre rien) ; `version` est absent, null, ou des
+/// chiffres et des points. Ajouté dans la v1 sans changer de version : une popup plus ancienne
+/// l'ignore comme tout type inconnu.
+/// Popup → hôte : `ready`, `token`, `openConsole`, `signOut`, `fatal`.
+///
+/// La démonstration, ajoutée dans la v1 de la même façon : `ready` annonce `features: ["demo"]`
+/// (un hôte plus ancien ignore le champ) ; l'hôte n'envoie `demo` (`{"type":"demo","cycles":0}`)
+/// qu'à une popup qui l'a annoncée, avant l'état de session, puis `endDemo` pour revenir aux vrais
+/// bots. `cycles` : combien de boucles avant l'arrêt, 0 = jusqu'à ce que l'utilisateur la touche.
+/// Arrêtée d'elle-même, la démo garde sa dernière image et l'écrit à l'hôte : `demoEnded`.
 enum HostProtocol {
     static let version = 1
+    /// Ce que cette popup sait faire au-delà de la v1, annoncé dans `ready` (et déclaré dans
+    /// `OpenedbotHostedFeatures` de l'Info.plist, que l'hôte lit avant de la lancer).
+    static let features = ["demo"]
     /// La plus longue ligne acceptée, en octets. Un vrai message en fait quelques centaines.
     static let maxLineLength = 16 * 1024
 
@@ -18,6 +39,13 @@ enum HostProtocol {
         case token(TokenReply)
         case signedOut
         case signedIn
+        /// L'état de la mise à jour de l'app chez l'hôte. `status` reste le mot reçu : c'est
+        /// `HostUpdate` qui décide quoi montrer, un mot inconnu ne montre rien.
+        case updateState(status: String, version: String?)
+        /// Jouer la démonstration (bots fictifs, aucun réseau) au lieu des bots de la session.
+        case demo(cycles: Int)
+        /// Revenir aux bots de la session.
+        case endDemo
     }
 
     /// Les trois valeurs sont nulles ensemble. Nulles sans `unavailable` : pas de session.
@@ -32,7 +60,7 @@ enum HostProtocol {
 
     /// Popup → hôte.
     enum Outgoing: Equatable, Sendable {
-        case ready(protocol: Int, version: String)
+        case ready(protocol: Int, version: String, features: [String] = HostProtocol.features)
         /// `force` : l'équivalent de `bridge.refresh()`, après un 401 sur un jeton qu'on croyait bon.
         case token(id: String, force: Bool)
         /// Montrer la fenêtre d'openedbot et l'amener sur ce chemin de la console.
@@ -40,6 +68,8 @@ enum HostProtocol {
         case signOut
         /// On refuse de tourner pour une raison qu'une relance ne guérira pas, puis on quitte.
         case fatal(code: String)
+        /// La démonstration s'est arrêtée d'elle-même ; elle garde sa dernière image jusqu'à `endDemo`.
+        case demoEnded
     }
 
     enum ParseFailure: Error, Equatable, Sendable {
@@ -76,6 +106,20 @@ enum HostProtocol {
             return .success(.token(reply))
         case "signedOut": return .success(.signedOut)
         case "signedIn": return .success(.signedIn)
+        case "updateState":
+            guard let status = f["status"] as? String, isWord(status) else { return .failure(.invalidFields) }
+            // Absent ou null : version inconnue. Présent : des chiffres et des points, rien d'autre.
+            let version: String?
+            switch f["version"] {
+            case nil, is NSNull: version = nil
+            case let v as String where isVersion(v): version = v
+            default: return .failure(.invalidFields)
+            }
+            return .success(.updateState(status: status, version: version))
+        case "demo":
+            guard let cycles = integer(f["cycles"]), cycles <= 100 else { return .failure(.invalidFields) }
+            return .success(.demo(cycles: cycles))
+        case "endDemo": return .success(.endDemo)
         default: return .failure(.unknownType)
         }
     }
@@ -85,11 +129,12 @@ enum HostProtocol {
     /// Une ligne terminée par `\n`. On copie les champs un à un : rien d'autre ne peut partir.
     static func encode(_ message: Outgoing) -> Data {
         let fields: [String: Any] = switch message {
-        case .ready(let p, let v): ["type": "ready", "protocol": p, "version": v]
+        case .ready(let p, let v, let features): ["type": "ready", "protocol": p, "version": v, "features": features]
         case .token(let id, let force): ["type": "token", "id": id, "force": force]
         case .openConsole(let path): ["type": "openConsole", "path": path]
         case .signOut: ["type": "signOut"]
         case .fatal(let code): ["type": "fatal", "code": code]
+        case .demoEnded: ["type": "demoEnded"]
         }
         // JSONSerialization échappe les sauts de ligne des chaînes : un message reste une ligne.
         var data = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])) ?? Data(#"{"type":"fatal","code":"ENCODING"}"#.utf8)
@@ -131,6 +176,16 @@ enum HostProtocol {
 
     private static func isID(_ s: String) -> Bool {
         (1...64).contains(s.count) && s.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "-" || $0 == "_" }
+    }
+
+    /// Un mot d'état : 1 à 32 lettres ASCII minuscules.
+    private static func isWord(_ s: String) -> Bool {
+        (1...32).contains(s.unicodeScalars.count) && s.unicodeScalars.allSatisfy { ("a"..."z").contains($0) }
+    }
+
+    /// Une version : 1 à 32 chiffres ASCII et points.
+    private static func isVersion(_ s: String) -> Bool {
+        (1...32).contains(s.unicodeScalars.count) && s.unicodeScalars.allSatisfy { ("0"..."9").contains($0) || $0 == "." }
     }
 
     private static func string(_ value: Any?, max: Int) -> String? {

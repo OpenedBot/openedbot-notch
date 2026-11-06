@@ -19,6 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// La démo, toujours prête ; le flux openedbot, créé quand un compte est connecté.
     private(set) var feed: MockBotFeed!
     private var live: OpenedbotFeed?
+    /// La démonstration demandée par openedbot (`demo`), nil sinon. Elle prime sur la session.
+    private(set) var demo: DemoBotFeed?
+    /// Les fils de la session à relire quand elle reprend après la démonstration.
+    private var resumeThreads: Set<String> = []
+    /// Les bots qui travaillaient avant la démonstration : leur run fini pendant elle s'annonce au retour.
+    private var resumeBaseline: [String: Bot] = [:]
     private(set) var notch: NotchWindowController!
     private var status: StatusItemController!
     private var settingsWindow: NSWindow?
@@ -50,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notices = NoticeCenter(model: model)
         notices.isIsland = { [weak self] in self?.notch.isIsland ?? false }
         notices.isDialogOpen = { [weak self] id in self?.notch.hasDialog(id) ?? false }
+        notices.isMuted = { [weak self] in self?.demo != nil }
         notch.notices = notices
         feed.onTransition = { [weak self] bot, transition in self?.handle(bot, transition) }
         status = StatusItemController(model: model)
@@ -79,7 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(3)
         }
         self.host = host
-        notch.onOpenConsole = { [weak host] path in host?.openConsole(path: path) }
+        host.onUpdate = { [weak self] update in self?.model.update = update }
+        host.onDemo = { [weak self] cycles in self?.startDemo(cycles: cycles) }
+        host.onEndDemo = { [weak self] in self?.endDemo() }
+        // Les bots de la démonstration sont fictifs : aucune page de la console à ouvrir pour eux.
+        // Le reste (la console, la page des mises à jour) s'ouvre comme d'habitude.
+        notch.onOpenConsole = { [weak self, weak host] path in
+            guard self?.demo == nil || !DemoBotFeed.isFictional(path: path) else { return }
+            host?.openConsole(path: path)
+        }
         channel.start(onLine: { [weak host] line in host?.receive(line: line) },
                       onEOF: { [weak host] in
                           host?.hostClosed()
@@ -119,6 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// sont écrits à sa création : on la rejoue dans la nouvelle langue.
     private func languageChanged() {
         settingsWindow?.title = tr("openedbot notch Settings", "Réglages openedbot notch")
+        if let demo {
+            // Ses textes aussi sont écrits à sa création : elle reprend au début du cycle, dans la
+            // nouvelle langue, sans perdre sa limite de cycles ni un geste déjà fait.
+            demo.relocalize()
+            return
+        }
         if live == nil {
             if isHosted { showHostedSignedOut() } else { feed.start() }
         }
@@ -142,10 +163,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func syncFeed() {
+        // La démonstration tient l'encoche : la session attend `endDemo`.
+        guard demo == nil else { return }
         if tokens.isSignedIn, live == nil {
             feed.stop()
             let f = OpenedbotFeed(model: model, account: tokens)
             f.onTransition = { [weak self] bot, transition in self?.handle(bot, transition) }
+            f.onRosterLoaded = { [weak self] in self?.notices.rosterLoaded() }
+            f.catchUpThreads = resumeThreads
+            f.resumeBaseline = resumeBaseline
+            resumeThreads = []
+            resumeBaseline = [:]
             live = f
             notch.feed = f
             f.start()
@@ -163,6 +191,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if isHosted { showHostedSignedOut() }
         }
+    }
+
+    // MARK: Démonstration de la première connexion
+
+    /// `demo` : la démonstration remplace les bots de la session (le flux openedbot s'arrête, il
+    /// reprendra à `endDemo`). Rejouée depuis le début si elle tournait déjà.
+    private func startDemo(cycles: Int) {
+        // Les fils que la session avait chargés : relus au retour (une démonstration rejouée garde
+        // ceux de la session, pas ceux des bots fictifs).
+        // Ceux qu'une démonstration précédente n'a pas encore pu relire restent à relire.
+        if demo == nil, let live {
+            let working = model.bots.filter { $0.activity == .working }
+            resumeThreads = Set(model.bots.compactMap { $0.conversation != nil ? $0.threadID : nil })
+                .union(working.compactMap(\.threadID)).union(live.catchUpThreads)
+            // Une démonstration rejouée avant la première relecture garde la référence d'avant.
+            resumeBaseline = live.resumeBaseline.merging(working.map { ($0.id, $0) }) { kept, _ in kept }
+        }
+        stopLive()
+        feed.stop()
+        let demo = self.demo ?? DemoBotFeed(model: model)
+        demo.onEnded = { [weak self] in self?.host?.demoEnded() }
+        demo.fold = { [weak self] in self?.notch.foldIfPointerAway() }
+        self.demo = demo
+        notch.onInteraction = { [weak demo] in demo?.userInteracted() }
+        if notch.feed !== demo { notch.feed = demo }
+        // Les notifications de la session ne se mêlent pas à la démonstration ; elles reviennent après.
+        // Une bannière de la session déjà affichée ne reste pas non plus par-dessus les bots fictifs.
+        notices.setAside()
+        // En île autour de la caméra, quel que soit le bord choisi (gardé tel quel).
+        model.edgeOverride = .top
+        demo.start(cycles: cycles)
+    }
+
+    /// `endDemo` : retour aux bots de la session (ou à rien, sans session).
+    private func endDemo() {
+        guard let demo else { return }
+        demo.stop()
+        self.demo = nil
+        notch.onInteraction = nil
+        notices.restore()
+        model.edgeOverride = nil
+        model.isExpanded = false
+        model.bots = []
+        model.sections = []
+        notch.feed = feed
+        syncFeed()
+    }
+
+    private func stopLive() {
+        notch.yolo?.stop()
+        notch.yolo = nil
+        live?.stop()
+        live = nil
     }
 
     /// Hébergée et sans session : pas de démo, l'encoche dit où se connecter.
@@ -232,10 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func menuIcon(for bot: Bot) -> NSImage? {
-        guard let image = Avatars.image(for: bot.artwork) else { return nil }
-        let icon = image.copy() as! NSImage
-        icon.size = NSSize(width: 16, height: 16)
-        return icon
+        AvatarView.menuImage(for: bot)
     }
 
     /// Le chemin de la console pour un bot : son fil unique, `/bot/:botId` (`route-tree.tsx`).
@@ -251,7 +329,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func openBotInConsole(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        host?.openConsole(path: Self.consolePath(botID: id))
+        let path = Self.consolePath(botID: id)
+        guard demo == nil || !DemoBotFeed.isFictional(path: path) else { return }
+        host?.openConsole(path: path)
     }
     @objc private func openOpenedbot() { host?.openConsole(path: "/") }
     @objc private func keepOpen() { notch.togglePin() }

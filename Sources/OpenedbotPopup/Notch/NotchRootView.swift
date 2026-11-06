@@ -15,6 +15,8 @@ struct NotchRootView: View {
     var onShowAll: () -> Void = {}
     var onClearNotices: () -> Void = {}
     var onKillYolo: () -> Void = {}
+    /// La ligne « Mise à jour prête / requise » : openedbot sur ses réglages de mise à jour.
+    var onOpenUpdates: () -> Void = {}
 
     var body: some View {
         if geometry.isIsland { island } else { standard }
@@ -25,7 +27,8 @@ struct NotchRootView: View {
         let g = geometry
         let open = model.showsBody
         let compact = Island.compact(bots: model.bots, unread: model.inbox.unreadCount,
-                                     latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()))
+                                     latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()),
+                                     update: model.update.badge)
         let flash = model.islandFlash
         let banner = model.banner
         return ZStack(alignment: .topLeading) {
@@ -46,7 +49,8 @@ struct NotchRootView: View {
             if open {
                 IslandPanelView(model: model, geometry: g, onOpenDialog: onOpenDialog,
                                 onSettings: { model.settingsSpins += 1; onOrb() }, onRespond: onRespond,
-                                onOpenNotice: onOpenNotice, onClearNotices: onClearNotices, onKillYolo: onKillYolo)
+                                onOpenNotice: onOpenNotice, onClearNotices: onClearNotices, onKillYolo: onKillYolo,
+                                onOpenUpdates: onOpenUpdates)
                     .onGeometryChange(for: CGSize.self) { $0.size } action: { model.islandSize = $0 }
                     .offset(x: g.restMid - NotchGeometry.islandWidth / 2)
                     .transition(.scale(scale: 0.4, anchor: .top).combined(with: .opacity))

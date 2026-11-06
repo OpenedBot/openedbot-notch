@@ -218,6 +218,27 @@ struct SnapshotExportTests {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
                   size: CGSize(width: 520, height: 820))
         model.yolo = YoloState()
+        // La mise à jour annoncée par l'hôte : le point bleu au repos et au travail, la ligne du panneau.
+        model.update = HostUpdate(status: .ready, version: "1.0.4")
+        try shoot("notch-compact-ready", IslandCompactView(model: model, geometry: island,
+                                                           compact: Island.compact(bots: idle, update: .ready), flash: nil)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
+                  size: CGSize(width: 420, height: 60))
+        var updateBusy = busy
+        updateBusy.update = .ready
+        try shoot("notch-compact-ready-busy", IslandCompactView(model: model, geometry: island, compact: updateBusy, flash: nil)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
+                  size: CGSize(width: 420, height: 60))
+        try shoot("notch-expanded-ready", IslandPanelView(model: model, geometry: island, onOpenDialog: { _ in }, onSettings: {},
+                                                          onRespond: { _, _, _ in })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
+                  size: CGSize(width: 520, height: 820))
+        model.update = HostUpdate(status: .required, version: nil)
+        try shoot("notch-expanded-required", IslandPanelView(model: model, geometry: island, onOpenDialog: { _ in }, onSettings: {},
+                                                             onRespond: { _, _, _ in })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(backdrop),
+                  size: CGSize(width: 520, height: 820))
+        model.update = .none
         try SessionKeychain(service: TestSupport.keychainService, legacyService: nil).delete(origin: account.origin!)
     }
 }

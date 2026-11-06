@@ -185,6 +185,128 @@ struct OpenedbotFeedTests {
         #expect(model.feedState == nil) // `start()` n'a pas été appelé : pas de flux SSE dans ce test
     }
 
+    @Test func anUploadedAvatarIsFetchedAsSoonAsTheRosterArrives() async throws {
+        let (feed, model, t, account) = try make()
+        t.on("/api/bots", (200, Self.roster.replacingOccurrences(of: #""face":{"artwork":"explorer"}"#,
+                                                                  with: #""face":{"artwork":"/api/attachments/att-sup","palette":"rose"}"#)))
+        let images = RemoteImages()
+        final class Paths: @unchecked Sendable { var list: [String] = [] }
+        let paths = Paths()
+        images.loader = { path in paths.list.append(path); throw OpenedbotAuthError.http(status: 404, code: nil) }
+        feed.images = images
+        await signIn(account)
+        await feed.refresh(threads: [])
+        #expect(AvatarSource.resolve(seed: "b-sup", face: model.bot("b-sup")?.avatarFace) == .uploaded(path: "/api/attachments/att-sup"))
+        for _ in 0..<200 where !images.failed("/api/attachments/att-sup", maxPixels: Avatars.thumbnailPixels) {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        // Demandée sans qu'aucune vue ne l'affiche ; refusée, elle laisse la place au visage bloub.
+        #expect(paths.list == ["/api/attachments/att-sup"])
+        #expect(images.failed("/api/attachments/att-sup", maxPixels: Avatars.thumbnailPixels))
+    }
+
+    /// Des réponses qui arrivent en retard : la relecture est en vol quand le flux s'arrête.
+    final class SlowTransport: HTTPTransport, @unchecked Sendable {
+        let inner: StubTransport
+        init(_ inner: StubTransport) { self.inner = inner }
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            let reply = try await inner.send(request)
+            try? await Task.sleep(for: .milliseconds(150))
+            return reply
+        }
+    }
+
+    @Test func aStoppedFeedNoLongerWritesTheModel() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        let inFlight = Task { await feed.refresh(threads: []) }
+        await waitUntil { t.calls.contains { $0.path == "/api/bots" } }
+        // La démonstration prend la place : le flux s'arrête, ses bots fictifs s'installent.
+        feed.stop()
+        model.bots = DemoBotFeed.roster(now: Date())
+        await inFlight.value
+        #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
+        #expect(model.sections.isEmpty)
+        // Une action encore en vol qui relance une relecture ensuite : rien non plus.
+        await feed.refresh(threads: [])
+        #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
+    }
+
+    @Test func aFailureAfterTheStopLeavesTheModelAlone() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        t.on("/api/bots", (403, #"{"error":{"code":"FORBIDDEN"}}"#))
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        let inFlight = Task { await feed.refresh(threads: []) }
+        await waitUntil { t.calls.contains { $0.path == "/api/bots" } }
+        feed.stop()
+        model.feedState = .live // la démonstration a pris la place
+        await inFlight.value
+        #expect(model.feedState == .live)
+    }
+
+    @Test func aFeedStoppedDuringItsFirstRefreshOpensNoStream() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        feed.start()
+        await waitUntil { t.calls.contains { $0.path == "/api/bots" } }
+        feed.stop()
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(!feed.isStreaming)
+    }
+
+    @Test func aResponseCompletingAfterTheStopLeavesTheResumedSessionAlone() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        await feed.refresh(threads: [])
+        t.on("/api/approvals/ap-1/respond", (202, #"{"decision":{"id":"d","entryHash":"h"}}"#))
+        let id = try #require(model.bot("b-sup")?.pending?.id)
+        feed.respond(approvalID: id, allow: true)
+        await waitUntil { t.calls.contains { $0.path == "/api/approvals/ap-1/respond" } }
+        // La démonstration arrête le flux ; la session reprend avec une autre demande du même bot.
+        feed.stop()
+        let next = Approval(remoteID: "ap-2", botID: "b-sup", runID: "r-2", tool: "shell", command: "ls", expiresAt: Date().addingTimeInterval(600))
+        model.update("b-sup") { $0.pending = next; $0.thread = [] }
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(model.bot("b-sup")?.pending?.id == next.id, "the predecessor's answer never closes the new request")
+        #expect(model.bot("b-sup")?.thread.isEmpty == true)
+    }
+
+    @Test func theThreadsTheSessionHadLoadedAreRereadUntilReadOnce() async throws {
+        let (feed, model, t, account) = try make()
+        await signIn(account)
+        // Ops, inactif, avait son fil chargé avant la démonstration ; un bot parti entre-temps aussi.
+        feed.catchUpThreads = ["t-ops", "t-gone"]
+        t.on("/api/threads/t-ops", (503, #"{"error":{"code":"UNAVAILABLE"}}"#))
+        await feed.refresh(threads: [])
+        #expect(model.bot("b-ops")?.conversation == nil)
+        #expect(feed.catchUpThreads == ["t-ops"], "still pending after a failed read; the departed bot's thread is dropped")
+        t.on("/api/threads/t-ops", (200, #"{"id":"t-ops","cursor":1,"messages":[],"runs":[],"workflows":[],"approvals":[]}"#))
+        await feed.refresh(threads: [])
+        #expect(model.bot("b-ops")?.conversation != nil)
+        #expect(feed.catchUpThreads.isEmpty)
+        let reads = t.calls.filter { $0.path == "/api/threads/t-ops" }.count
+        await feed.refresh(threads: [])
+        #expect(t.calls.filter { $0.path == "/api/threads/t-ops" }.count == reads, "read once is enough")
+    }
+
+    @Test func aLoadedRosterIsAnnouncedEvenEmpty() async throws {
+        let (feed, _, t, account) = try make()
+        await signIn(account)
+        t.on("/api/bots", (200, #"{"bots":[],"sections":[],"cursor":0}"#))
+        var loads = 0
+        feed.onRosterLoaded = { loads += 1 }
+        await feed.refresh(threads: [])
+        #expect(loads == 1)
+    }
+
     @Test func respondPostsTheChoiceAndClearsTheCard() async throws {
         let (feed, model, t, account) = try make()
         await signIn(account)
@@ -256,6 +378,52 @@ struct OpenedbotFeedTests {
         #expect(model.bots.isEmpty)
         if case .failed = model.feedState {} else { Issue.record("attendu : flux arrêté, obtenu \(String(describing: model.feedState))") }
         #expect(account.phase == .signedOut) // la session morte est jetée
+    }
+
+    /// Support travaillait quand la démonstration a pris l'encoche ; son run a fini (ou échoué) pendant elle.
+    private func resumeAfterDemo(runStatus: String, snapshotFailsFirst: Bool = false) async throws
+        -> (seen: [(String, FeedTransition)], second: [(String, FeedTransition)]) {
+        let (feed, _, t, account) = try make()
+        await signIn(account)
+        t.on("/api/bots", (200, Self.roster.replacingOccurrences(of: "\"awaitingApproval\":true,\"running\":true", with: "\"awaitingApproval\":false,\"running\":false")))
+        t.on("/api/inbox", (200, #"{"items":[],"counts":{"approval":0,"needsReview":0,"needsYou":0,"total":0}}"#))
+        let snapshot = Self.snapshot(now: Date())
+            .replacingOccurrences(of: "\"status\":\"awaiting_approval\",\"input\"", with: "\"status\":\"\(runStatus)\",\"input\"")
+            .replacingOccurrences(of: "\"status\":\"pending\"", with: "\"status\":\"approved\"")
+        if snapshotFailsFirst {
+            t.on("/api/threads/t-sup", (503, #"{"error":{"code":"UNAVAILABLE"}}"#), (200, snapshot))
+        } else {
+            t.on("/api/threads/t-sup", (200, snapshot))
+        }
+        let runtime = BotRuntime(name: "vps-paris", model: "m", mode: "auto", connected: true, lastSeenAt: Date(), connectorVersion: "", latestVersion: nil, downSince: nil)
+        let before = Bot(id: "b-sup", name: "Support", threadID: "t-sup", runtime: runtime,
+                         runs: [BotRun(id: "r-1", kind: .dm, title: "t", detail: "", status: .running, usedSteps: 1, maxSteps: 8, tokens: 0, since: Date())])
+        #expect(before.activity == .working)
+        feed.resumeBaseline = ["b-sup": before]
+        feed.catchUpThreads = ["t-sup"]
+        var seen: [(String, FeedTransition)] = []
+        feed.onTransition = { bot, tr in seen.append((bot.id, tr)) }
+        await feed.refresh(threads: [])
+        let first = seen
+        seen = []
+        await feed.refresh(threads: [])
+        return (first, seen)
+    }
+
+    @Test func aRunThatEndedDuringTheDemoIsAnnouncedOnceOnReturn() async throws {
+        let done = try await resumeAfterDemo(runStatus: "completed")
+        #expect(done.seen.map(\.0) == ["b-sup"] && done.seen.map(\.1) == [.finished])
+        #expect(done.second.isEmpty) // une fois
+        let failed = try await resumeAfterDemo(runStatus: "error")
+        #expect(failed.seen.map(\.1) == [.failed])
+        #expect(failed.second.isEmpty)
+    }
+
+    @Test func anUnreadableThreadDefersTheAnnouncementInsteadOfGuessing() async throws {
+        // Fil illisible à la première relecture : rien (ni « fini » deviné) ; relu ensuite : « échoué », une fois.
+        let r = try await resumeAfterDemo(runStatus: "error", snapshotFailsFirst: true)
+        #expect(r.seen.isEmpty)
+        #expect(r.second.map(\.0) == ["b-sup"] && r.second.map(\.1) == [.failed])
     }
 
     @Test func transitionsAreAnnouncedBetweenRefreshes() async throws {

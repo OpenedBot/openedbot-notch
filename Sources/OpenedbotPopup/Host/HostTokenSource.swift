@@ -30,6 +30,13 @@ final class HostTokenSource: TokenSource {
 
     /// `hello` invalide ou d'une autre version : la popup doit s'arrêter avec ce code.
     @ObservationIgnored var onFatal: (String) -> Void = { _ in }
+    /// L'état de la mise à jour de l'app annoncé par l'hôte (`updateState`), et `.none` quand l'hôte
+    /// ferme. Il survit à `signedOut` : une mise à jour concerne l'app, pas la session.
+    @ObservationIgnored var onUpdate: (HostUpdate) -> Void = { _ in }
+    /// `demo` : jouer la démonstration, `cycles` boucles (0 = jusqu'à ce qu'on la touche).
+    @ObservationIgnored var onDemo: (Int) -> Void = { _ in }
+    /// `endDemo` : revenir aux bots de la session.
+    @ObservationIgnored var onEndDemo: () -> Void = {}
 
     init(send: @escaping (HostProtocol.Outgoing) -> Bool, timeout: Duration = .seconds(20)) {
         self.send = send
@@ -71,13 +78,21 @@ final class HostTokenSource: TokenSource {
             dropSession()
         case .signedIn:
             isSignedIn = true
+        case .updateState(let status, let version):
+            onUpdate(HostUpdate(status: status, version: version))
+        case .demo(let cycles):
+            onDemo(cycles)
+        case .endDemo:
+            onEndDemo()
         }
     }
 
-    /// stdin fermé : l'hôte est parti. Les demandes en cours échouent, rien d'autre ne partira.
+    /// stdin fermé : l'hôte est parti. Les demandes en cours échouent, rien d'autre ne partira, et
+    /// l'état de mise à jour qu'il avait annoncé ne vaut plus.
     func hostClosed() {
         closed = true
         failPending(OpenedbotAuthError.cancelled)
+        onUpdate(.none)
     }
 
     // MARK: TokenSource
@@ -97,6 +112,11 @@ final class HostTokenSource: TokenSource {
 
     func openConsole(path: String) {
         if !send(.openConsole(path: path)) { Self.log.error("ouverture de la console non transmise : hôte injoignable") }
+    }
+
+    /// La démonstration s'est arrêtée d'elle-même : l'hôte décide de la suite (`endDemo`, ou l'arrêt).
+    func demoEnded() {
+        if !send(.demoEnded) { Self.log.error("fin de démonstration non transmise : hôte injoignable") }
     }
 
     /// La déconnexion appartient à openedbot : on la lui demande, il répondra `signedOut`.

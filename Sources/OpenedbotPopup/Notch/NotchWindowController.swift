@@ -44,9 +44,11 @@ final class NotchWindowController {
     var notices: NoticeCenter?
     /// Les baux YOLO, avec une session openedbot seulement : « Couper YOLO partout » passe par lui.
     var yolo: YoloMonitor?
+    /// Un geste de l'utilisateur sur l'encoche (survol, réponse, fenêtre ouverte) : la démonstration l'écoute.
+    var onInteraction: (() -> Void)?
     var isIsland: Bool { geometry.isIsland }
     func hasDialog(_ botID: String) -> Bool { dialogs[botID] != nil }
-    private var screenObserver: NSObjectProtocol?
+    private var placementTriggers: PlacementTriggers?
 
     init(model: NotchModel, feed: any BotFeed) {
         self.model = model
@@ -66,20 +68,16 @@ final class NotchWindowController {
         panel.orderFrontRegardless()
         installMonitors()
         observeModel()
-        // Écran branché, résolution, Dock agrandi ou déplacé : le Dock et la caméra bougent, on se replace.
-        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                                                object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rebuild() }
-        }
+        placementTriggers = PlacementTriggers { [weak self] in self?.rebuild() }
     }
 
     private func currentLayoutKey() -> LayoutKey {
-        LayoutKey(edge: model.edge, scale: model.sizeScale, offsets: model.alongOffsets, hidden: model.isHidden, items: model.items)
+        LayoutKey(edge: model.placedEdge, scale: model.sizeScale, offsets: model.alongOffsets, hidden: model.isHidden, items: model.items)
     }
 
     func shutdown() {
-        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
-        screenObserver = nil
+        placementTriggers?.stop()
+        placementTriggers = nil
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = []
         pollTimer?.invalidate()
@@ -91,8 +89,22 @@ final class NotchWindowController {
 
     // MARK: Géométrie
 
+    /// L'écran de la caméra : l'écran intégré quand il est ouvert (le seul à avoir une encoche),
+    /// sinon l'écran principal. Les écrans supplémentaires n'ont pas d'encoche à eux.
+    static func notchScreen() -> NSScreen {
+        let screens = NSScreen.screens
+        let main = NSScreen.main.flatMap { main in screens.firstIndex(of: main) }
+        let index = cameraScreenIndex(hasCamera: screens.map { $0.auxiliaryTopLeftArea != nil }, main: main)
+        return index.map { screens[$0] } ?? NSScreen.main ?? screens[0]
+    }
+
+    /// Le premier écran avec une caméra, sinon l'écran principal, sinon le premier.
+    nonisolated static func cameraScreenIndex(hasCamera: [Bool], main: Int?) -> Int? {
+        hasCamera.firstIndex(of: true) ?? main ?? (hasCamera.isEmpty ? nil : 0)
+    }
+
     private static func makeGeometry(model: NotchModel) -> NotchGeometry {
-        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let screen = notchScreen()
         // L'encoche de la caméra : entre les deux zones libres du haut (nil sans encoche).
         let camera: CGRect? = {
             guard let l = screen.auxiliaryTopLeftArea, let r = screen.auxiliaryTopRightArea, r.minX > l.maxX,
@@ -100,8 +112,8 @@ final class NotchWindowController {
             return CGRect(x: l.maxX, y: screen.frame.maxY - screen.safeAreaInsets.top,
                           width: r.minX - l.maxX, height: screen.safeAreaInsets.top)
         }()
-        let place = NotchGeometry.placement(edge: model.edge, screenFrame: screen.frame, visibleFrame: screen.visibleFrame, camera: camera)
-        return NotchGeometry(edge: model.edge, metrics: model.metrics, cellCount: max(model.items.count, 1),
+        let place = NotchGeometry.placement(edge: model.placedEdge, screenFrame: screen.frame, visibleFrame: screen.visibleFrame, camera: camera)
+        return NotchGeometry(edge: model.placedEdge, metrics: model.metrics, cellCount: max(model.items.count, 1),
                              screen: place.screen, alongOffset: model.alongOffset, inset: place.inset,
                              restLength: place.restLength, minBodyLength: place.minBodyLength, anchor: place.anchor)
     }
@@ -117,7 +129,8 @@ final class NotchWindowController {
                                       onLater: { [weak self] in self?.notices?.dismissBanner() },
                                       onShowAll: { [weak self] in self?.showAllNotices() },
                                       onClearNotices: { [weak self] in self?.notices?.clear() },
-                                      onKillYolo: { [weak self] in self?.yolo?.kill() })
+                                      onKillYolo: { [weak self] in self?.yolo?.kill() },
+                                      onOpenUpdates: { [weak self] in self?.onOpenConsole?(HostUpdate.consolePath) })
         panel.setFrame(geometry.panelFrame, display: true)
     }
 
@@ -135,6 +148,7 @@ final class NotchWindowController {
 
     /// Une réponse donnée depuis l'île : envoyée au flux, puis rappelée à côté de la caméra.
     private func respond(_ bot: Bot, _ approval: Approval, _ allow: Bool) {
+        onInteraction?()
         feed.respond(approvalID: approval.id, allow: allow)
         model.flash(Island.Flash(botID: bot.id, botName: bot.name, kind: allow ? .allowed : .denied))
     }
@@ -204,7 +218,8 @@ final class NotchWindowController {
         var wingsSide: CGFloat?
         if geometry.isIsland, !model.showsBody {
             let compact = Island.compact(bots: model.bots, unread: model.inbox.unreadCount,
-                                         latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()))
+                                         latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()),
+                                         update: model.update.badge)
             if compact != nil || model.islandFlash != nil {
                 wingsSide = Island.sideWidth(compact: compact, flash: model.islandFlash, cameraHeight: geometry.inset)
             }
@@ -223,6 +238,7 @@ final class NotchWindowController {
         notices?.setHovering(hit == .banner)
         guard hit != lastHit else { return }
         lastHit = hit
+        if hit != .none { onInteraction?() }
 
         switch hit {
         case .pill:
@@ -269,6 +285,12 @@ final class NotchWindowController {
         model.overlayAnchor = nil
     }
 
+    /// Replie le panneau, sauf si le pointeur est dessus (la démonstration après sa réponse).
+    func foldIfPointerAway() {
+        guard !model.isPinned else { return }
+        scheduleFold()
+    }
+
     private func scheduleFold() {
         foldWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -304,6 +326,7 @@ final class NotchWindowController {
     nonisolated static func pinsWhileDialogOpen(island: Bool) -> Bool { !island }
 
     func openDialog(botID: String) {
+        onInteraction?()
         guard dialogs[botID] == nil else { dialogs[botID]?.panel.orderFrontRegardless(); return }
         clearOverlay()
         let size = AgentDialogView.size
@@ -341,7 +364,7 @@ final class NotchWindowController {
 
     /// Au milieu de l'écran, chaque fenêtre ouverte en plus décalée de 28 pt vers le bas et la droite.
     private func dialogFrame(botID: String, size: CGSize) -> NSRect {
-        let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+        let screen = Self.notchScreen().visibleFrame
         let step = CGFloat(dialogs.count) * 28
         var frame = NSRect(x: screen.midX - size.width / 2 + step, y: screen.midY - size.height / 2 - step,
                            width: size.width, height: size.height)
@@ -439,9 +462,37 @@ final class NotchWindowController {
 
     private func drag(dx: CGFloat, dy: CGFloat) {
         guard geometry.isDraggable else { return }
-        let delta = model.edge.isVertical ? dy : dx
+        let delta = model.placedEdge.isVertical ? dy : dx
         let range = geometry.alongOffsetRange
         let current = min(max(model.alongOffset, range.lowerBound), range.upperBound)
         model.alongOffset = min(max(current + delta, range.lowerBound), range.upperBound)
+    }
+}
+
+/// Ce qui oblige à replacer l'encoche : un écran branché, une résolution, le Dock agrandi ou déplacé
+/// (le Dock et la caméra bougent), et le réveil (l'écran intégré a pu revenir ou partir pendant le
+/// sommeil, et macOS ne l'annonce pas toujours comme un changement d'écran).
+@MainActor
+final class PlacementTriggers {
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+
+    init(app: NotificationCenter = .default, workspace: NotificationCenter = NSWorkspace.shared.notificationCenter,
+         onChange: @escaping @MainActor () -> Void) {
+        let triggers: [(NotificationCenter, Notification.Name)] = [
+            (app, NSApplication.didChangeScreenParametersNotification),
+            (workspace, NSWorkspace.didWakeNotification),
+            (workspace, NSWorkspace.screensDidWakeNotification),
+        ]
+        for (center, name) in triggers {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { onChange() }
+            }
+            observers.append((center, token))
+        }
+    }
+
+    func stop() {
+        for (center, token) in observers { center.removeObserver(token) }
+        observers = []
     }
 }

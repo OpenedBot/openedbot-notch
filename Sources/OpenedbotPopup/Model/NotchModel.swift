@@ -59,6 +59,8 @@ final class NotchModel {
     var runtime: RuntimeStatus?
     /// Les baux YOLO actifs de l'organisation (`YoloMonitor`) ; vide en démo et sans session.
     var yolo = YoloState()
+    /// La mise à jour de l'app annoncée par openedbot (`updateState`) ; rien en autonome.
+    var update = HostUpdate.none
     /// Le journal en direct : réglages › Journal et la carte du runtime le lisent.
     var journal = Journal()
     /// Le catalogue de modèles du runtime, pour la puce de la fenêtre d'agent.
@@ -95,6 +97,10 @@ final class NotchModel {
 
     // Réglages
     var edge: NotchEdge = .right { didSet { save(edge.rawValue, "edge") } }
+    /// Un bord imposé sans être gardé : la démonstration se joue toujours en île, autour de la caméra.
+    var edgeOverride: NotchEdge?
+    /// Le bord où l'encoche est posée : l'imposé, sinon le choisi.
+    var placedEdge: NotchEdge { edgeOverride ?? edge }
     var alongOffsets: [NotchEdge: CGFloat] = [:] {
         didSet { save(alongOffsets.map { "\($0.key.rawValue):\($0.value)" }.joined(separator: ","), "offsets") }
     }
@@ -110,8 +116,8 @@ final class NotchModel {
 
     var metrics: NotchMetrics { NotchMetrics(scale: sizeScale) }
     var alongOffset: CGFloat {
-        get { alongOffsets[edge] ?? 0 }
-        set { alongOffsets[edge] = newValue }
+        get { alongOffsets[placedEdge] ?? 0 }
+        set { alongOffsets[placedEdge] = newValue }
     }
     var showsBody: Bool { !isHidden && (isExpanded || isPinned || alwaysOn || announcement != nil) }
 

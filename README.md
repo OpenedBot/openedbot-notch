@@ -30,6 +30,11 @@ click to open the agent window: read the thread, approve or deny, reply. No need
 
 - **One ring per bot**: avatar in the centre, run progress as an arc coloured by state
   (running, awaiting approval, completed, runtime offline), amber badge when an approval waits.
+- **Same avatar as the console** everywhere (ring, list, cards, agent window, menu-bar menu):
+  an uploaded image (`/api/attachments/:id`, fetched with the session, cached in memory as a
+  128 px thumbnail, the drawn face if it cannot load), a catalogue artwork, or the drawn face.
+  `Resources/bots` is a byte copy of the console's `public/bots` (all 33 artworks); a test fails
+  if one is missing.
 - **Hover card**: bot, runtime, model, permission mode, routines, current runs, pending approval
   with *Deny* / *Allow once*.
 - **Agent window**: thread (messages, tool calls), inline approval, composer. One window per agent.
@@ -40,7 +45,18 @@ click to open the agent window: read the thread, approve or deny, reply. No need
 - **YOLO badge** (signed in, camera-notch island): a red `YOLO` badge and a countdown while a
   YOLO lease auto-approves a bot's writes on the host, and *Turn YOLO off everywhere* in the
   expanded island. See [YOLO leases](#yolo-leases).
+- **Update badge** (hosted, camera-notch island): a blue dot in the compact island when openedbot
+  has an update *ready* or *required*, and an *Update ready* / *Update required* row in the
+  expanded island that opens openedbot on its update settings. See
+  [Embedding in the desktop app](#embedding-in-the-desktop-app).
+- **First sign-in demo** (hosted): when openedbot asks (`demo`), a scripted 12-second loop with
+  two fictional bots, *Recherche* and *Rédaction*, and no network: both work, an approval unfolds
+  the island with *Autoriser* / *Refuser* answered locally, both finish. It loops until the user
+  touches it, then stops at the end of the cycle. See
+  [Embedding in the desktop app](#embedding-in-the-desktop-app).
 - **Menu bar item**, four screen edges, settings window, English and French UI.
+  Hosted, the notch defaults to the island around the camera (`top`), on the screen that has the
+  camera (the built-in one when open, else the main screen), and is re-placed on wake.
 
 An interactive HTML mockup of the design lives in [`design/index.html`](design/index.html)
 (open it in a browser, no build needed).
@@ -130,12 +146,43 @@ a checkout next to its own, `../openedbot-notch` from its root (`NOTCH_DIR=/path
 otherwise):
 
 ```sh
-make bundle    # dist/OpenedbotPopup.app, with OpenedbotHostedProtocol 1 in its Info.plist
+make bundle    # dist/OpenedbotPopup.app, with OpenedbotHostedProtocol 1 and OpenedbotHostedFeatures in its Info.plist
 ```
 
-The hosted-mode protocol (`Sources/OpenedbotPopup/Host/HostProtocol.swift`) mirrors
-[`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts),
-which is the reference: change both sides together.
+The hosted-mode protocol (`Sources/OpenedbotPopup/Host/HostProtocol.swift`) mirrors the desktop
+host, which is the reference: the Tauri shell's
+[`apps/desktop-tauri/src-tauri/src/popup.rs`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop-tauri/src-tauri/src/popup.rs)
+(and the Electron shell's
+[`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts)).
+Change both sides together.
+
+Host → popup messages are `hello`, `token`, `signedIn`, `signedOut`, `updateState`, `demo` and
+`endDemo`; popup → host messages are `ready`, `token`, `openConsole`, `signOut`, `fatal` and
+`demoEnded`. A message type the popup does not know is logged and ignored, so the host can add one
+without a protocol bump.
+
+The demo was added within v1 the same way. `ready` announces what the popup can do beyond v1,
+`{"type":"ready","protocol":1,"version":"1.0.0","features":["demo"]}`, and the bundle declares the
+same list (`OpenedbotHostedFeatures` in its Info.plist) so that the host knows before launching it.
+The host sends `{"type":"demo","cycles":0}` only to a popup that announced it, right after `hello`
+and before `signedIn`, so the real bots never show first; `cycles` is how many loops before it stops
+by itself (0: until the user touches it). Stopped by itself, the demo keeps its last frame and
+sends `{"type":"demoEnded"}`; `{"type":"endDemo"}` brings the session's bots back. The demo's
+fictional bots open nothing in the console.
+
+`updateState` is the app's update status, sent on every change and once after `hello` +
+`signedIn`/`signedOut`:
+
+```json
+{"type":"updateState","status":"ready","version":"1.0.4"}
+```
+
+`status` is 1 to 32 lowercase letters (`idle`, `checking`, `available`, `downloading`, `ready`,
+`installing`, `error`, `required`; any other word shows nothing); `version` is absent, `null`, or 1
+to 32 digits and dots (the downloaded version for `ready`, the minimum for `required`). Anything
+else drops the line. Only `ready` and `required` show the badge; the state survives `signedOut`
+and is cleared when the host closes stdin. Clicking the row sends
+`{"type":"openConsole","path":"/settings/updates"}`; the notch never installs or restarts anything.
 
 ## Configuration
 
@@ -161,7 +208,7 @@ Sources/OpenedbotPopup
 ├── Host/    hosted-mode stdio protocol
 ├── Model/   domain models, geometry, layout rules, mock feed
 └── Notch/   notch panel, rings, cards, agent window
-Tests/OpenedbotPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases)
+Tests/OpenedbotPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases, update badge)
 Resources/            Info.plist, bot artworks, faces, provider marks
 design/               static HTML mockup
 ```

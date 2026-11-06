@@ -109,6 +109,13 @@ struct Inbox: Equatable, Sendable {
         return next
     }
 
+    /// Une bannière interrompue repasse en tête de la file, si sa notification est là et non lue.
+    mutating func requeueFirst(_ id: UUID) {
+        guard notices.contains(where: { $0.id == id && !$0.read }) else { return }
+        queue.removeAll { $0 == id }
+        queue.insert(id, at: 0)
+    }
+
     /// Vide la file sans montrer les bannières (le récapitulatif d'absence les remplace) ;
     /// les notifications restent non lues.
     mutating func drainQueue() -> [Notice] {
@@ -145,6 +152,21 @@ struct Inbox: Equatable, Sendable {
     }
 
     /// Une demande d'accord répondue (ici, dans la fenêtre ou ailleurs) : lue, et plus de bannière.
+    /// La boîte rendue après la démonstration, face au premier état du flux qui reprend : chaque
+    /// demande d'accord prend l'identité locale que le flux vient de donner à la même demande
+    /// (`current`, d'une identité d'avant à celle d'aujourd'hui), ou se ferme si elle n'attend plus.
+    mutating func reconcileApprovals(_ current: (UUID) -> UUID?) {
+        for i in notices.indices {
+            guard let old = notices[i].approvalID else { continue }
+            if let id = current(old) {
+                notices[i].approvalID = id
+            } else {
+                notices[i].read = true
+                queue.removeAll { $0 == notices[i].id }
+            }
+        }
+    }
+
     mutating func resolveApproval(_ approvalID: UUID) {
         for i in notices.indices where notices[i].approvalID == approvalID {
             notices[i].read = true
