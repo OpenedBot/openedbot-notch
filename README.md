@@ -44,7 +44,14 @@ click to open the agent window: read the thread, approve or deny, reply. No need
   has an update *ready* or *required*, and an *Update ready* / *Update required* row in the
   expanded island that opens openedbot on its update settings. See
   [Embedding in the desktop app](#embedding-in-the-desktop-app).
+- **First sign-in demo** (hosted): when openedbot asks (`demo`), a scripted 12-second loop with
+  two fictional bots, *Recherche* and *Rédaction*, and no network: both work, an approval unfolds
+  the island with *Autoriser* / *Refuser* answered locally, both finish. It loops until the user
+  touches it, then stops at the end of the cycle. See
+  [Embedding in the desktop app](#embedding-in-the-desktop-app).
 - **Menu bar item**, four screen edges, settings window, English and French UI.
+  Hosted, the notch defaults to the island around the camera (`top`), on the screen that has the
+  camera (the built-in one when open, else the main screen), and is re-placed on wake.
 
 An interactive HTML mockup of the design lives in [`design/index.html`](design/index.html)
 (open it in a browser, no build needed).
@@ -134,7 +141,7 @@ a checkout next to its own, `../openedbot-notch` from its root (`NOTCH_DIR=/path
 otherwise):
 
 ```sh
-make bundle    # dist/OpenedbotPopup.app, with OpenedbotHostedProtocol 1 in its Info.plist
+make bundle    # dist/OpenedbotPopup.app, with OpenedbotHostedProtocol 1 and OpenedbotHostedFeatures in its Info.plist
 ```
 
 The hosted-mode protocol (`Sources/OpenedbotPopup/Host/HostProtocol.swift`) mirrors the desktop
@@ -144,9 +151,19 @@ host, which is the reference: the Tauri shell's
 [`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts)).
 Change both sides together.
 
-Host → popup messages are `hello`, `token`, `signedIn`, `signedOut` and `updateState`; popup →
-host messages are `ready`, `token`, `openConsole`, `signOut` and `fatal`. A message type the popup
-does not know is logged and ignored, so the host can add one without a protocol bump.
+Host → popup messages are `hello`, `token`, `signedIn`, `signedOut`, `updateState`, `demo` and
+`endDemo`; popup → host messages are `ready`, `token`, `openConsole`, `signOut`, `fatal` and
+`demoEnded`. A message type the popup does not know is logged and ignored, so the host can add one
+without a protocol bump.
+
+The demo was added within v1 the same way. `ready` announces what the popup can do beyond v1,
+`{"type":"ready","protocol":1,"version":"1.0.0","features":["demo"]}`, and the bundle declares the
+same list (`OpenedbotHostedFeatures` in its Info.plist) so that the host knows before launching it.
+The host sends `{"type":"demo","cycles":0}` only to a popup that announced it, right after `hello`
+and before `signedIn`, so the real bots never show first; `cycles` is how many loops before it stops
+by itself (0: until the user touches it). Stopped by itself, the demo keeps its last frame and
+sends `{"type":"demoEnded"}`; `{"type":"endDemo"}` brings the session's bots back. The demo's
+fictional bots open nothing in the console.
 
 `updateState` is the app's update status, sent on every change and once after `hello` +
 `signedIn`/`signedOut`:

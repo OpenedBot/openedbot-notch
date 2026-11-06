@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// La démo, toujours prête ; le flux openedbot, créé quand un compte est connecté.
     private(set) var feed: MockBotFeed!
     private var live: OpenedbotFeed?
+    /// La démonstration demandée par openedbot (`demo`), nil sinon. Elle prime sur la session.
+    private(set) var demo: DemoBotFeed?
+    private var savedInbox: Inbox?
     private(set) var notch: NotchWindowController!
     private var status: StatusItemController!
     private var settingsWindow: NSWindow?
@@ -80,7 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.host = host
         host.onUpdate = { [weak self] update in self?.model.update = update }
-        notch.onOpenConsole = { [weak host] path in host?.openConsole(path: path) }
+        host.onDemo = { [weak self] cycles in self?.startDemo(cycles: cycles) }
+        host.onEndDemo = { [weak self] in self?.endDemo() }
+        // Les bots de la démonstration sont fictifs : aucune page de la console à ouvrir pour eux.
+        notch.onOpenConsole = { [weak self, weak host] path in
+            guard self?.demo == nil else { return }
+            host?.openConsole(path: path)
+        }
         channel.start(onLine: { [weak host] line in host?.receive(line: line) },
                       onEOF: { [weak host] in
                           host?.hostClosed()
@@ -120,6 +129,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// sont écrits à sa création : on la rejoue dans la nouvelle langue.
     private func languageChanged() {
         settingsWindow?.title = tr("openedbot notch Settings", "Réglages openedbot notch")
+        if let demo {
+            // Ses textes aussi sont écrits à sa création : elle reprend au début, dans la nouvelle langue.
+            if demo.isPlaying { startDemo(cycles: 0) }
+            return
+        }
         if live == nil {
             if isHosted { showHostedSignedOut() } else { feed.start() }
         }
@@ -143,6 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func syncFeed() {
+        // La démonstration tient l'encoche : la session attend `endDemo`.
+        guard demo == nil else { return }
         if tokens.isSignedIn, live == nil {
             feed.stop()
             let f = OpenedbotFeed(model: model, account: tokens)
@@ -164,6 +180,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if isHosted { showHostedSignedOut() }
         }
+    }
+
+    // MARK: Démonstration de la première connexion
+
+    /// `demo` : la démonstration remplace les bots de la session (le flux openedbot s'arrête, il
+    /// reprendra à `endDemo`). Rejouée depuis le début si elle tournait déjà.
+    private func startDemo(cycles: Int) {
+        stopLive()
+        feed.stop()
+        let demo = self.demo ?? DemoBotFeed(model: model)
+        demo.onEnded = { [weak self] in self?.host?.demoEnded() }
+        demo.fold = { [weak self] in self?.notch.foldIfPointerAway() }
+        self.demo = demo
+        notch.onInteraction = { [weak demo] in demo?.userInteracted() }
+        if notch.feed !== demo { notch.feed = demo }
+        // Les notifications de la session ne se mêlent pas à la démonstration ; elles reviennent après.
+        if savedInbox == nil { savedInbox = model.inbox }
+        model.inbox = Inbox()
+        // En île autour de la caméra, quel que soit le bord choisi (gardé tel quel).
+        model.edgeOverride = .top
+        demo.start(cycles: cycles)
+    }
+
+    /// `endDemo` : retour aux bots de la session (ou à rien, sans session).
+    private func endDemo() {
+        guard let demo else { return }
+        demo.stop()
+        self.demo = nil
+        notch.onInteraction = nil
+        if let savedInbox { model.inbox = savedInbox }
+        savedInbox = nil
+        model.edgeOverride = nil
+        model.isExpanded = false
+        model.bots = []
+        model.sections = []
+        notch.feed = feed
+        syncFeed()
+    }
+
+    private func stopLive() {
+        notch.yolo?.stop()
+        notch.yolo = nil
+        live?.stop()
+        live = nil
     }
 
     /// Hébergée et sans session : pas de démo, l'encoche dit où se connecter.

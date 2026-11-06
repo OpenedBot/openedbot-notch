@@ -19,8 +19,17 @@ import Foundation
 /// chiffres et des points. Ajouté dans la v1 sans changer de version : une popup plus ancienne
 /// l'ignore comme tout type inconnu.
 /// Popup → hôte : `ready`, `token`, `openConsole`, `signOut`, `fatal`.
+///
+/// La démonstration, ajoutée dans la v1 de la même façon : `ready` annonce `features: ["demo"]`
+/// (un hôte plus ancien ignore le champ) ; l'hôte n'envoie `demo` (`{"type":"demo","cycles":0}`)
+/// qu'à une popup qui l'a annoncée, avant l'état de session, puis `endDemo` pour revenir aux vrais
+/// bots. `cycles` : combien de boucles avant l'arrêt, 0 = jusqu'à ce que l'utilisateur la touche.
+/// Arrêtée d'elle-même, la démo garde sa dernière image et l'écrit à l'hôte : `demoEnded`.
 enum HostProtocol {
     static let version = 1
+    /// Ce que cette popup sait faire au-delà de la v1, annoncé dans `ready` (et déclaré dans
+    /// `OpenedbotHostedFeatures` de l'Info.plist, que l'hôte lit avant de la lancer).
+    static let features = ["demo"]
     /// La plus longue ligne acceptée, en octets. Un vrai message en fait quelques centaines.
     static let maxLineLength = 16 * 1024
 
@@ -33,6 +42,10 @@ enum HostProtocol {
         /// L'état de la mise à jour de l'app chez l'hôte. `status` reste le mot reçu : c'est
         /// `HostUpdate` qui décide quoi montrer, un mot inconnu ne montre rien.
         case updateState(status: String, version: String?)
+        /// Jouer la démonstration (bots fictifs, aucun réseau) au lieu des bots de la session.
+        case demo(cycles: Int)
+        /// Revenir aux bots de la session.
+        case endDemo
     }
 
     /// Les trois valeurs sont nulles ensemble. Nulles sans `unavailable` : pas de session.
@@ -47,7 +60,7 @@ enum HostProtocol {
 
     /// Popup → hôte.
     enum Outgoing: Equatable, Sendable {
-        case ready(protocol: Int, version: String)
+        case ready(protocol: Int, version: String, features: [String] = HostProtocol.features)
         /// `force` : l'équivalent de `bridge.refresh()`, après un 401 sur un jeton qu'on croyait bon.
         case token(id: String, force: Bool)
         /// Montrer la fenêtre d'openedbot et l'amener sur ce chemin de la console.
@@ -55,6 +68,8 @@ enum HostProtocol {
         case signOut
         /// On refuse de tourner pour une raison qu'une relance ne guérira pas, puis on quitte.
         case fatal(code: String)
+        /// La démonstration s'est arrêtée d'elle-même ; elle garde sa dernière image jusqu'à `endDemo`.
+        case demoEnded
     }
 
     enum ParseFailure: Error, Equatable, Sendable {
@@ -101,6 +116,10 @@ enum HostProtocol {
             default: return .failure(.invalidFields)
             }
             return .success(.updateState(status: status, version: version))
+        case "demo":
+            guard let cycles = integer(f["cycles"]), cycles <= 100 else { return .failure(.invalidFields) }
+            return .success(.demo(cycles: cycles))
+        case "endDemo": return .success(.endDemo)
         default: return .failure(.unknownType)
         }
     }
@@ -110,11 +129,12 @@ enum HostProtocol {
     /// Une ligne terminée par `\n`. On copie les champs un à un : rien d'autre ne peut partir.
     static func encode(_ message: Outgoing) -> Data {
         let fields: [String: Any] = switch message {
-        case .ready(let p, let v): ["type": "ready", "protocol": p, "version": v]
+        case .ready(let p, let v, let features): ["type": "ready", "protocol": p, "version": v, "features": features]
         case .token(let id, let force): ["type": "token", "id": id, "force": force]
         case .openConsole(let path): ["type": "openConsole", "path": path]
         case .signOut: ["type": "signOut"]
         case .fatal(let code): ["type": "fatal", "code": code]
+        case .demoEnded: ["type": "demoEnded"]
         }
         // JSONSerialization échappe les sauts de ligne des chaînes : un message reste une ligne.
         var data = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])) ?? Data(#"{"type":"fatal","code":"ENCODING"}"#.utf8)

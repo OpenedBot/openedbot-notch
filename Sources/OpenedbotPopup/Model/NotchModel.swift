@@ -97,6 +97,10 @@ final class NotchModel {
 
     // Réglages
     var edge: NotchEdge = .right { didSet { save(edge.rawValue, "edge") } }
+    /// Un bord imposé sans être gardé : la démonstration se joue toujours en île, autour de la caméra.
+    var edgeOverride: NotchEdge?
+    /// Le bord où l'encoche est posée : l'imposé, sinon le choisi.
+    var placedEdge: NotchEdge { edgeOverride ?? edge }
     var alongOffsets: [NotchEdge: CGFloat] = [:] {
         didSet { save(alongOffsets.map { "\($0.key.rawValue):\($0.value)" }.joined(separator: ","), "offsets") }
     }
@@ -112,8 +116,8 @@ final class NotchModel {
 
     var metrics: NotchMetrics { NotchMetrics(scale: sizeScale) }
     var alongOffset: CGFloat {
-        get { alongOffsets[edge] ?? 0 }
-        set { alongOffsets[edge] = newValue }
+        get { alongOffsets[placedEdge] ?? 0 }
+        set { alongOffsets[placedEdge] = newValue }
     }
     var showsBody: Bool { !isHidden && (isExpanded || isPinned || alwaysOn || announcement != nil) }
 

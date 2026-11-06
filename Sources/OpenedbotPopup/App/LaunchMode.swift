@@ -22,6 +22,7 @@ enum LaunchMode {
         guard hosted, let suite = UserDefaults(suiteName: hostedSuite) else { return .standard }
         let standalone = UserDefaults.standard.persistentDomain(forName: Bundle.main.bundleIdentifier ?? "app.openedbot.popup") ?? [:]
         seed(suite, from: standalone)
+        defaultHostedEdge(suite)
         return suite
     }
 
@@ -32,6 +33,14 @@ enum LaunchMode {
         }
         suite.set(true, forKey: seededKey)
     }
+
+    /// Dans openedbot, l'encoche est l'île autour de la caméra (`top`), comme la démonstration de la
+    /// première connexion la montre ; un bord déjà choisi (ou repris de l'autonome) reste.
+    static func defaultHostedEdge(_ suite: UserDefaults) {
+        if suite.object(forKey: edgeKey) == nil { suite.set(NotchEdge.top.rawValue, forKey: edgeKey) }
+    }
+
+    static let edgeKey = "notch.edge"
 
     /// Une autre popup déjà lancée (autonome ou hébergée) : même identifiant, autre processus.
     /// Deux encoches au même bord se recouvriraient ; la dernière arrivée s'efface.

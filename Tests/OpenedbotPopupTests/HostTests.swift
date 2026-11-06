@@ -32,6 +32,24 @@ struct HostProtocolTests {
         #expect(HostProtocol.parse(String(repeating: "x", count: HostProtocol.maxLineLength + 1)) == .failure(.tooLong))
     }
 
+    @Test func theDemoMessagesParseAndRefuseOddCycles() {
+        #expect(HostProtocol.parse(#"{"type":"demo","cycles":0}"#) == .success(.demo(cycles: 0)))
+        #expect(HostProtocol.parse(#"{"type":"demo","cycles":2,"extra":1}"#) == .success(.demo(cycles: 2)))
+        #expect(HostProtocol.parse(#"{"type":"endDemo"}"#) == .success(.endDemo))
+        #expect(HostProtocol.parse(#"{"type":"demo"}"#) == .failure(.invalidFields))
+        #expect(HostProtocol.parse(#"{"type":"demo","cycles":-1}"#) == .failure(.invalidFields))
+        #expect(HostProtocol.parse(#"{"type":"demo","cycles":true}"#) == .failure(.invalidFields))
+        #expect(HostProtocol.parse(#"{"type":"demo","cycles":101}"#) == .failure(.invalidFields))
+    }
+
+    @Test func theBundleDeclaresWhatReadyAnnounces() throws {
+        // L'hôte lit `OpenedbotHostedFeatures` avant de lancer la popup : la déclaration et `ready` disent la même chose.
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/Info.plist")
+        let plist = try #require(NSDictionary(contentsOf: url))
+        #expect(plist["OpenedbotHostedFeatures"] as? [String] == HostProtocol.features)
+        #expect(plist["OpenedbotHostedProtocol"] as? Int == HostProtocol.version)
+    }
+
     @Test func anUnknownVersionStillParses() {
         // C'est HostTokenSource qui décide de s'arrêter (voir plus bas).
         #expect(HostProtocol.parse(#"{"type":"hello","protocol":2,"apiOrigin":"https://a.b","consoleUrl":"https://a.b"}"#)
@@ -40,7 +58,9 @@ struct HostProtocolTests {
 
     @Test func outgoingMessagesAreOneLineOfKnownFields() throws {
         let messages: [(HostProtocol.Outgoing, [String: AnyHashable])] = [
-            (.ready(protocol: 1, version: "0.1.0"), ["type": "ready", "protocol": 1, "version": "0.1.0"]),
+            (.ready(protocol: 1, version: "0.1.0"), ["type": "ready", "protocol": 1, "version": "0.1.0", "features": ["demo"]]),
+            (.ready(protocol: 1, version: "0.1.0", features: []), ["type": "ready", "protocol": 1, "version": "0.1.0", "features": [String]()]),
+            (.demoEnded, ["type": "demoEnded"]),
             (.token(id: "7", force: true), ["type": "token", "id": "7", "force": true]),
             (.openConsole(path: "/bot/b\n1"), ["type": "openConsole", "path": "/bot/b\n1"]),
             (.signOut, ["type": "signOut"]),
