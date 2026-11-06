@@ -301,9 +301,12 @@ final class OpenedbotFeed: BotFeed {
                  key: "refresh")
         } catch OpenedbotAuthError.cancelled {
         } catch OpenedbotAuthError.http(let status, let code) where status == 401 || status == 403 {
+            // Un échec qui revient après l'arrêt ne parle plus pour ce qui occupe le modèle.
+            guard started == generation else { return }
             setState(.failed(OpenedbotAuthError.http(status: status, code: code).userMessage))
             streamTask?.cancel(); streamTask = nil
         } catch {
+            guard started == generation else { return }
             note(.error, .api, tr("refresh failed: \(Self.text(error))", "relecture échouée : \(Self.text(error))"), key: "refresh-error")
             if model.feedState != .live { setState(.retrying(Self.text(error))) }
         }

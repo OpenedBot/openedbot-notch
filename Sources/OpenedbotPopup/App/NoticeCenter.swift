@@ -87,6 +87,9 @@ final class NoticeCenter {
 
     /// Montre la prochaine bannière si rien ne la retient : île, annonces actives, présent, panneau fermé.
     func pump() {
+        // La boîte rendue après la démonstration attend son recalage : ses demandes d'accord
+        // portent encore l'identité d'avant.
+        guard !reconcilesApprovals else { return }
         guard isIsland(), model.announces, !model.isAway, model.banner == nil, !model.showsBody else { return }
         guard let next = model.inbox.nextBanner() else { return }
         show(.notice(next))
@@ -175,6 +178,7 @@ final class NoticeCenter {
         reconcilesApprovals = false
         let pending = Dictionary(model.bots.compactMap { b in b.pending.map { (b.id, $0.id) } }, uniquingKeysWith: { a, _ in a })
         model.inbox.reconcileApprovals(pending: pending)
+        pump()
     }
 
     private func rosterChanged() {

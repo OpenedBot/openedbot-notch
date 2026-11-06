@@ -214,6 +214,20 @@ struct OpenedbotFeedTests {
         #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
     }
 
+    @Test func aFailureAfterTheStopLeavesTheModelAlone() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        t.on("/api/bots", (403, #"{"error":{"code":"FORBIDDEN"}}"#))
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        let inFlight = Task { await feed.refresh(threads: []) }
+        await waitUntil { t.calls.contains { $0.path == "/api/bots" } }
+        feed.stop()
+        model.feedState = .live // la démonstration a pris la place
+        await inFlight.value
+        #expect(model.feedState == .live)
+    }
+
     @Test func aFeedStoppedDuringItsFirstRefreshOpensNoStream() async throws {
         let (_, model, t, account) = try make()
         await signIn(account)

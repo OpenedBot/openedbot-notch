@@ -227,6 +227,25 @@ struct InboxTests {
         #expect(model.inbox.unreadCount == 0)
     }
 
+    @Test func restoredApprovalsWaitForTheirReconciliationBeforeAnyBanner() {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        center.isIsland = { true }
+        model.plays = false
+        var saved = Inbox()
+        saved.add(notice(.approval, "seo", approval: UUID()))
+        center.restore(saved)
+        center.pump()
+        #expect(model.banner == nil, "not with the identity from before the demo")
+        var seo = bot("seo", replies: [])
+        seo.pending = Approval(botID: "seo", runID: "r", tool: "shell", command: "ls", expiresAt: now.addingTimeInterval(600))
+        model.bots = [seo]
+        center.rosterLoaded()
+        guard case .notice(let shown) = model.banner else { Issue.record("no banner after the reconciliation"); return }
+        #expect(shown.approvalID == seo.pending?.id)
+    }
+
     @Test func approvalsRestoredAfterTheDemoCloseOnAnEmptyRoster() {
         let model = NotchModel()
         let center = NoticeCenter(model: model)
