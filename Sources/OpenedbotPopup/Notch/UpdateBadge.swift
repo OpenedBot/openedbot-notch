@@ -8,7 +8,7 @@ struct UpdateDot: View {
     let badge: HostUpdate.Badge
 
     var body: some View {
-        Circle().fill(Palette.info)
+        Circle().fill(Palette.update)
             .frame(width: Island.updateDotSize, height: Island.updateDotSize)
             .accessibilityElement()
             .accessibilityLabel(badge.title)
@@ -27,7 +27,7 @@ struct IslandUpdateRow: View {
             Button(action: open) {
                 HStack(spacing: 10) {
                     Image(systemName: update.badge == .required ? "exclamationmark.arrow.circlepath" : "arrow.down.circle.fill")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.info)
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.update)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Palette.textPrimary).lineLimit(1)
                         if let subtitle = update.subtitle {
@@ -39,7 +39,7 @@ struct IslandUpdateRow: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(hovering ? 0.1 : 0.06)))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.info.opacity(0.4), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.update.opacity(0.4), lineWidth: 1))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
