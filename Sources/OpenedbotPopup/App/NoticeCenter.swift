@@ -20,6 +20,12 @@ final class NoticeCenter {
     private var setAsideInbox: Inbox?
     /// Les demandes en attente quand la démonstration a commencé : identité locale → openedbot.
     private var setAsideApprovals: [UUID: String] = [:]
+    /// Les messages des bots de la session déjà vus quand la démonstration a commencé : une réponse
+    /// arrivée depuis s'annonce au retour, comparée à eux et non aux bots fictifs.
+    private var setAsideMessages: [String: Set<String>] = [:]
+    /// La bannière de la session que la démonstration a interrompue : elle repasse en tête au retour
+    /// si sa notification attend toujours (une demande d'accord encore ouverte, par exemple).
+    private var setAsideBanner: UUID?
     /// La démonstration est finie : la boîte de la session reviendra au premier roster du flux qui
     /// reprend, ses demandes d'accord recalées dessus.
     private var reconcilesApprovals = false
@@ -175,6 +181,8 @@ final class NoticeCenter {
         if setAsideInbox == nil {
             setAsideInbox = model.inbox
             setAsideApprovals = Self.remoteApprovals(model.bots)
+            setAsideMessages = knownMessages
+            if case .notice(let shown) = model.banner { setAsideBanner = shown.id }
         }
         reconcilesApprovals = false
         model.inbox = Inbox()
@@ -195,14 +203,23 @@ final class NoticeCenter {
         reconcilesApprovals = false
         setAsideInbox = nil
         let before = setAsideApprovals
+        let seen = setAsideMessages
+        let interrupted = setAsideBanner
         setAsideApprovals = [:]
+        setAsideMessages = [:]
+        setAsideBanner = nil
         var now: [String: UUID] = [:]
         for (local, remote) in Self.remoteApprovals(model.bots) { now[remote] = local }
         // La même demande (même identité openedbot) seulement : une autre demande du même bot ne
         // reprend jamais le texte d'une ancienne.
         inbox.reconcileApprovals { old in before[old].flatMap { now[$0] } }
         for notice in model.inbox.notices.reversed() { inbox.add(notice) }
+        if let interrupted { inbox.requeueFirst(interrupted) }
         model.inbox = inbox
+        // Les réponses arrivées pendant la démonstration, face aux messages vus avant elle ; le
+        // roster est ensuite vu par le centre, pour ne pas les annoncer deux fois.
+        announceReplies(previous: seen, bots: model.bots)
+        snapshot(model.bots)
         // Les demandes arrivées pendant la démonstration : annoncées comme le flux l'aurait fait.
         let known = Set(before.values)
         for bot in model.bots {
@@ -219,11 +236,7 @@ final class NoticeCenter {
 
     private func rosterChanged() {
         let bots = model.bots
-        // Les réponses des bots, une par bot, sauf si sa fenêtre est ouverte.
-        for reply in MessageDiff.replies(previous: knownMessages, bots: bots, since: startedAt) where !isMuted() && !isDialogOpen(reply.botID) {
-            let more = reply.count > 1 ? tr(" (+\(reply.count - 1))", " (+\(reply.count - 1))") : ""
-            post(Notice(kind: .message, botID: reply.botID, botName: reply.botName, text: reply.text + more, at: reply.at))
-        }
+        announceReplies(previous: knownMessages, bots: bots)
         // Une demande d'accord répondue ailleurs (fenêtre, console) : plus de bannière ni de badge.
         for bot in bots {
             if let old = knownApprovals[bot.id], bot.pending?.id != old { resolve(old) }
@@ -250,6 +263,14 @@ final class NoticeCenter {
         if model.systemNotifications != wantedSystem {
             wantedSystem = model.systemNotifications
             if wantedSystem { requestSystemPermission() }
+        }
+    }
+
+    /// Les réponses des bots, une par bot, sauf si sa fenêtre est ouverte.
+    private func announceReplies(previous: [String: Set<String>], bots: [Bot]) {
+        for reply in MessageDiff.replies(previous: previous, bots: bots, since: startedAt) where !isMuted() && !isDialogOpen(reply.botID) {
+            let more = reply.count > 1 ? tr(" (+\(reply.count - 1))", " (+\(reply.count - 1))") : ""
+            post(Notice(kind: .message, botID: reply.botID, botName: reply.botName, text: reply.text + more, at: reply.at))
         }
     }
 

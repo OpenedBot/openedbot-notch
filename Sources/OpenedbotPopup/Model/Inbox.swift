@@ -109,6 +109,13 @@ struct Inbox: Equatable, Sendable {
         return next
     }
 
+    /// Une bannière interrompue repasse en tête de la file, si sa notification est là et non lue.
+    mutating func requeueFirst(_ id: UUID) {
+        guard notices.contains(where: { $0.id == id && !$0.read }) else { return }
+        queue.removeAll { $0 == id }
+        queue.insert(id, at: 0)
+    }
+
     /// Vide la file sans montrer les bannières (le récapitulatif d'absence les remplace) ;
     /// les notifications restent non lues.
     mutating func drainQueue() -> [Notice] {

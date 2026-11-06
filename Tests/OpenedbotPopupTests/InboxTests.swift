@@ -309,6 +309,66 @@ struct InboxTests {
         #expect(model.inbox.unreadCount == 1)
     }
 
+    @Test func aReplyDuringTheDemoIsAnnouncedOnceWhenTheSessionReturns() async {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        model.plays = false
+        let seen = ChatMessage(role: .bot, text: "Avant", at: now)
+        model.bots = [bot("seo", replies: [seen])]
+        try? await Task.sleep(for: .milliseconds(50))
+        center.setAside()
+        model.bots = DemoBotFeed.roster(now: Date())
+        try? await Task.sleep(for: .milliseconds(50))
+        // Fin de la démonstration : les bots fictifs partent, puis le flux de la session reprend.
+        center.restore()
+        model.bots = []
+        try? await Task.sleep(for: .milliseconds(50))
+        let reply = ChatMessage(role: .bot, text: "Pendant la démo", at: Date())
+        model.bots = [bot("seo", replies: [seen, reply])]
+        center.rosterLoaded()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(model.inbox.notices.filter { $0.kind == .message }.map(\.text) == ["Pendant la démo"], "announced once, the old one never")
+    }
+
+    /// Une demande d'accord en bannière quand la démonstration commence, et une panne en file derrière.
+    private func approvalBannerSetAside(_ center: NoticeCenter, _ model: NotchModel) {
+        model.plays = false
+        center.isIsland = { true }
+        let seo = waiting("seo", remote: "ap-seo")
+        model.bots = [seo]
+        center.transition(seo, .waiting)
+        guard case .notice(let shown) = model.banner, shown.kind == .approval else { Issue.record("no approval banner"); return }
+        center.post(notice(.failed, "ops"))
+        center.setAside()
+        #expect(model.banner == nil, "no session banner over the demo")
+        model.bots = DemoBotFeed.roster(now: now)
+        center.restore()
+    }
+
+    @Test func anApprovalBannerInterruptedByTheDemoComesBackFirst() {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        approvalBannerSetAside(center, model)
+        let seo = waiting("seo", remote: "ap-seo")
+        model.bots = [seo]
+        center.rosterLoaded()
+        guard case .notice(let shown) = model.banner else { Issue.record("no banner after the demo"); return }
+        #expect(shown.approvalID == seo.pending?.id, "the interrupted request, before the failure queued behind it")
+    }
+
+    @Test func anInterruptedApprovalAnsweredDuringTheDemoStaysClosed() {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        approvalBannerSetAside(center, model)
+        model.bots = [bot("seo", replies: [])]
+        center.rosterLoaded()
+        guard case .notice(let shown) = model.banner else { Issue.record("no banner after the demo"); return }
+        #expect(shown.kind == .failed && shown.botID == "ops")
+    }
+
     @Test func theDemoNeverBecomesANotification() async {
         let model = NotchModel()
         let center = NoticeCenter(model: model)
