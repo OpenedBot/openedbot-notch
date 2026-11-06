@@ -78,11 +78,17 @@ final class OpenedbotFeed: BotFeed {
     /// Change à chaque `stop()` : une relecture lancée avant ne touche plus au modèle, que la
     /// démonstration ou un autre flux occupe peut-être déjà.
     private var generation = 0
+    /// Arrêté par `stop()` : une action encore en vol (envoi, réponse, réaction) ne relance plus
+    /// de relecture.
+    private var stopped = false
+    /// Un roster vient d'être relu et posé dans le modèle, vide compris.
+    var onRosterLoaded: (() -> Void)?
 
     // MARK: BotFeed
 
     func start() {
         stop()
+        stopped = false
         let api = self.api
         RemoteImages.shared.loader = { path in try await api.data(path) }
         setState(.connecting)
@@ -103,6 +109,7 @@ final class OpenedbotFeed: BotFeed {
     func stop() {
         // Une relecture en vol (ses réponses déjà là, l'annulation n'y peut plus rien) n'écrira plus.
         generation += 1
+        stopped = true
         mainTask?.cancel(); mainTask = nil
         streamTask?.cancel(); streamTask = nil
         refreshTask?.cancel(); refreshTask = nil
@@ -206,6 +213,7 @@ final class OpenedbotFeed: BotFeed {
 
     /// Roster + runtime + inbox, puis les snapshots des fils demandés et des bots actifs.
     func refresh(threads requested: Set<String>) async {
+        guard !stopped else { return }
         let now = Date()
         let started = generation
         do {
@@ -283,6 +291,7 @@ final class OpenedbotFeed: BotFeed {
 
             announceTransitions(from: previous, to: bots)
             model.bots = bots
+            onRosterLoaded?()
             note(.info, .api, tr("refresh: \(bots.count) bots, \(snapshots.count) thread\(snapshots.count > 1 ? "s" : ""), cursor \(cursor) (\(Self.ms(since: now)))",
                                  "relecture : \(bots.count) bots, \(snapshots.count) fil\(snapshots.count > 1 ? "s" : ""), curseur \(cursor) (\(Self.ms(since: now)))"),
                  key: "refresh")

@@ -216,13 +216,32 @@ struct InboxTests {
         seo.pending = Approval(botID: "seo", runID: "r", tool: "shell", command: "ls", expiresAt: now.addingTimeInterval(600))
         let resumed = try! #require(seo.pending?.id)
         model.bots = [seo, bot("ops", replies: [])]
-        await waitUntil { model.inbox.unreadCount == 1 }
+        center.rosterLoaded()
+        #expect(model.inbox.unreadCount == 1)
         #expect(model.inbox.notices.first { $0.botID == "seo" }?.approvalID == resumed)
         #expect(model.inbox.notices.first { $0.botID == "ops" }?.read == true)
-        // Répondue ensuite, celle de seo se ferme comme les autres.
+        // Répondue ensuite (le roster une fois vu par le centre), celle de seo se ferme comme les autres.
+        try? await Task.sleep(for: .milliseconds(100))
         model.update("seo") { $0.pending = nil }
         await waitUntil { model.inbox.unreadCount == 0 }
         #expect(model.inbox.unreadCount == 0)
+    }
+
+    @Test func approvalsRestoredAfterTheDemoCloseOnAnEmptyRoster() {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        var saved = Inbox()
+        saved.add(notice(.approval, "seo", approval: UUID()))
+        center.restore(saved)
+        // Tous les bots archivés pendant la démonstration : le roster relu est vide.
+        model.bots = []
+        center.rosterLoaded()
+        #expect(model.inbox.unreadCount == 0 && model.inbox.nextBanner() == nil)
+        // Une seule fois : une nouvelle demande, ensuite, n'est pas touchée.
+        model.inbox.add(notice(.approval, "ops", approval: UUID()))
+        center.rosterLoaded()
+        #expect(model.inbox.unreadCount == 1)
     }
 
     @Test func theDemoNeverBecomesANotification() async {

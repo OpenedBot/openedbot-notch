@@ -209,6 +209,19 @@ struct OpenedbotFeedTests {
         await inFlight.value
         #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
         #expect(model.sections.isEmpty)
+        // Une action encore en vol qui relance une relecture ensuite : rien non plus.
+        await feed.refresh(threads: [])
+        #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
+    }
+
+    @Test func aLoadedRosterIsAnnouncedEvenEmpty() async throws {
+        let (feed, _, t, account) = try make()
+        await signIn(account)
+        t.on("/api/bots", (200, #"{"bots":[],"sections":[],"cursor":0}"#))
+        var loads = 0
+        feed.onRosterLoaded = { loads += 1 }
+        await feed.refresh(threads: [])
+        #expect(loads == 1)
     }
 
     @Test func respondPostsTheChoiceAndClearsTheCard() async throws {

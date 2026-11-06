@@ -166,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             feed.stop()
             let f = OpenedbotFeed(model: model, account: tokens)
             f.onTransition = { [weak self] bot, transition in self?.handle(bot, transition) }
+            f.onRosterLoaded = { [weak self] in self?.notices.rosterLoaded() }
             live = f
             notch.feed = f
             f.start()
