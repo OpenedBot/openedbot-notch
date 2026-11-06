@@ -75,6 +75,10 @@ final class OpenedbotFeed: BotFeed {
         self.timing = timing
     }
 
+    /// Change à chaque `stop()` : une relecture lancée avant ne touche plus au modèle, que la
+    /// démonstration ou un autre flux occupe peut-être déjà.
+    private var generation = 0
+
     // MARK: BotFeed
 
     func start() {
@@ -97,6 +101,8 @@ final class OpenedbotFeed: BotFeed {
     }
 
     func stop() {
+        // Une relecture en vol (ses réponses déjà là, l'annulation n'y peut plus rien) n'écrira plus.
+        generation += 1
         mainTask?.cancel(); mainTask = nil
         streamTask?.cancel(); streamTask = nil
         refreshTask?.cancel(); refreshTask = nil
@@ -201,11 +207,13 @@ final class OpenedbotFeed: BotFeed {
     /// Roster + runtime + inbox, puis les snapshots des fils demandés et des bots actifs.
     func refresh(threads requested: Set<String>) async {
         let now = Date()
+        let started = generation
         do {
             async let rosterCall: RosterDto = api.get("/api/bots")
             async let runtimeCall: RuntimeConfigurationDto? = fetchRuntime()
             async let inboxCall: InboxDto = api.get("/api/inbox", query: ["limit": "200"])
             let (roster, runtimeDto, inbox) = try await (rosterCall, runtimeCall, inboxCall)
+            guard started == generation else { return }
             if let runtimeDto {
                 runtime = runtimeDto
                 applyRuntime(runtimeDto)
@@ -214,6 +222,7 @@ final class OpenedbotFeed: BotFeed {
 
             if routinesLoadedAt.map({ now.timeIntervalSince($0) > timing.routinesEvery }) ?? true {
                 await loadRoutines(for: roster.bots.map(\.id), now: now)
+                guard started == generation else { return }
             }
 
             let previous = Dictionary(model.bots.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -241,6 +250,7 @@ final class OpenedbotFeed: BotFeed {
             for bot in bots where previous[bot.id]?.runs.contains(where: \.isLive) == true { threads.insert(bot.threadID ?? "") }
             threads.remove("")
             let snapshots = await fetchSnapshots(threads)
+            guard started == generation else { return }
 
             for i in bots.indices {
                 guard let thread = bots[i].threadID else { continue }

@@ -185,6 +185,32 @@ struct OpenedbotFeedTests {
         #expect(model.feedState == nil) // `start()` n'a pas été appelé : pas de flux SSE dans ce test
     }
 
+    /// Des réponses qui arrivent en retard : la relecture est en vol quand le flux s'arrête.
+    final class SlowTransport: HTTPTransport, @unchecked Sendable {
+        let inner: StubTransport
+        init(_ inner: StubTransport) { self.inner = inner }
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            let reply = try await inner.send(request)
+            try? await Task.sleep(for: .milliseconds(150))
+            return reply
+        }
+    }
+
+    @Test func aStoppedFeedNoLongerWritesTheModel() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        let inFlight = Task { await feed.refresh(threads: []) }
+        await waitUntil { t.calls.contains { $0.path == "/api/bots" } }
+        // La démonstration prend la place : le flux s'arrête, ses bots fictifs s'installent.
+        feed.stop()
+        model.bots = DemoBotFeed.roster(now: Date())
+        await inFlight.value
+        #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
+        #expect(model.sections.isEmpty)
+    }
+
     @Test func respondPostsTheChoiceAndClearsTheCard() async throws {
         let (feed, model, t, account) = try make()
         await signIn(account)
