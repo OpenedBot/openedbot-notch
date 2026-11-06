@@ -208,9 +208,10 @@ struct InboxTests {
     }
 
     /// La session avant la démonstration : les bots donnés, une notification par demande en attente.
-    private func sessionSetAside(_ center: NoticeCenter, _ model: NotchModel, _ bots: [Bot]) {
+    private func sessionSetAside(_ center: NoticeCenter, _ model: NotchModel, _ bots: [Bot], read: Bool = false) {
         model.bots = bots
         for bot in bots where bot.pending != nil { center.transition(bot, .waiting) }
+        if read { model.inbox.markAllRead() }
         center.setAside()
         #expect(model.inbox.notices.isEmpty, "the demo starts with an empty box")
         model.bots = DemoBotFeed.roster(now: now)
@@ -270,6 +271,25 @@ struct InboxTests {
         center.rosterLoaded()
         guard case .notice(let shown) = model.banner else { Issue.record("no banner after the reconciliation"); return }
         #expect(shown.approvalID == seo.pending?.id)
+    }
+
+    @Test func readApprovalsSurviveTheCleanupBeforeTheRosterReturns() async {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        model.plays = false
+        sessionSetAside(center, model, [waiting("seo", remote: "ap-seo")], read: true)
+        center.restore()
+        // Panneau de la démonstration refermé avant que le roster revienne : le ménage des lues passe.
+        model.isExpanded = true
+        try? await Task.sleep(for: .milliseconds(50))
+        model.isExpanded = false
+        model.bots = []
+        try? await Task.sleep(for: .milliseconds(50))
+        let seo = waiting("seo", remote: "ap-seo")
+        model.bots = [seo]
+        center.rosterLoaded()
+        #expect(model.inbox.notices.contains { $0.approvalID == seo.pending?.id }, "still pending, still there")
     }
 
     @Test func approvalsRestoredAfterTheDemoCloseOnAnEmptyRoster() {

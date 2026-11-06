@@ -20,8 +20,8 @@ final class NoticeCenter {
     private var setAsideInbox: Inbox?
     /// Les demandes en attente quand la démonstration a commencé : identité locale → openedbot.
     private var setAsideApprovals: [UUID: String] = [:]
-    /// La boîte de la session vient d'être rendue (fin de la démonstration) : ses demandes
-    /// d'accord se recalent sur le premier roster du flux qui reprend.
+    /// La démonstration est finie : la boîte de la session reviendra au premier roster du flux qui
+    /// reprend, ses demandes d'accord recalées dessus.
     private var reconcilesApprovals = false
 
     private var bannerWork: Task<Void, Never>?
@@ -181,26 +181,28 @@ final class NoticeCenter {
         dismissBanner()
     }
 
-    /// La démonstration est finie : la boîte de la session revient. Le flux qui reprend donne de
-    /// nouvelles identités locales à ses demandes d'accord : elles se recalent à son premier roster.
+    /// La démonstration est finie. Le flux qui reprend donne de nouvelles identités locales à ses
+    /// demandes d'accord : la boîte de la session ne revient qu'à son premier roster, recalée
+    /// dessus. D'ici là elle reste de côté, à l'abri du ménage des notifications lues.
     func restore() {
-        guard let inbox = setAsideInbox else { return }
-        setAsideInbox = nil
-        model.inbox = inbox
+        guard setAsideInbox != nil else { return }
         reconcilesApprovals = true
     }
 
     /// Le flux de la session a relu son roster (vide compris) et l'a posé dans le modèle.
     func rosterLoaded() {
-        guard reconcilesApprovals, !isMuted() else { return }
+        guard reconcilesApprovals, !isMuted(), var inbox = setAsideInbox else { return }
         reconcilesApprovals = false
+        setAsideInbox = nil
         let before = setAsideApprovals
         setAsideApprovals = [:]
         var now: [String: UUID] = [:]
         for (local, remote) in Self.remoteApprovals(model.bots) { now[remote] = local }
         // La même demande (même identité openedbot) seulement : une autre demande du même bot ne
         // reprend jamais le texte d'une ancienne.
-        model.inbox.reconcileApprovals { old in before[old].flatMap { now[$0] } }
+        inbox.reconcileApprovals { old in before[old].flatMap { now[$0] } }
+        for notice in model.inbox.notices.reversed() { inbox.add(notice) }
+        model.inbox = inbox
         // Les demandes arrivées pendant la démonstration : annoncées comme le flux l'aurait fait.
         let known = Set(before.values)
         for bot in model.bots {
