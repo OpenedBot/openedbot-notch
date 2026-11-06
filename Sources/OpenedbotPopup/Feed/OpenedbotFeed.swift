@@ -81,6 +81,8 @@ final class OpenedbotFeed: BotFeed {
     /// Arrêté par `stop()` : une action encore en vol (envoi, réponse, réaction) ne relance plus
     /// de relecture.
     private var stopped = false
+    /// Le flux d'événements tourne.
+    var isStreaming: Bool { streamTask != nil }
     /// Un roster vient d'être relu et posé dans le modèle, vide compris.
     var onRosterLoaded: (() -> Void)?
 
@@ -97,6 +99,8 @@ final class OpenedbotFeed: BotFeed {
         mainTask = Task { [weak self] in
             guard let self else { return }
             await refresh(threads: [])
+            // Arrêté pendant la première relecture : pas de flux d'événements orphelin.
+            guard !Task.isCancelled else { return }
             streamTask = Task { [weak self] in await self?.streamForever() }
             while !Task.isCancelled {
                 try? await Task.sleep(for: timing.poll)

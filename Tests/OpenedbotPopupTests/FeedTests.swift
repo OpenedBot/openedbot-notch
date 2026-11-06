@@ -214,6 +214,18 @@ struct OpenedbotFeedTests {
         #expect(model.bots.map(\.id) == [DemoBotFeed.researchID, DemoBotFeed.writingID])
     }
 
+    @Test func aFeedStoppedDuringItsFirstRefreshOpensNoStream() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        feed.start()
+        await waitUntil { t.calls.contains { $0.path == "/api/bots" } }
+        feed.stop()
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(!feed.isStreaming)
+    }
+
     @Test func aLoadedRosterIsAnnouncedEvenEmpty() async throws {
         let (feed, _, t, account) = try make()
         await signIn(account)
