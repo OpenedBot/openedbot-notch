@@ -351,6 +351,14 @@ struct InboxTests {
         model.bots = [bot("seo", replies: [])]
         center.rosterLoaded()
         try? await Task.sleep(for: .milliseconds(50))
+        // Rejouée avant que le fil revienne : ce qui avait été vu de seo reste vu.
+        center.setAside()
+        model.bots = DemoBotFeed.roster(now: now)
+        try? await Task.sleep(for: .milliseconds(50))
+        center.restore()
+        model.bots = [bot("seo", replies: [])]
+        center.rosterLoaded()
+        try? await Task.sleep(for: .milliseconds(50))
         // Relu ensuite : la réponse d'avant la démonstration reste vue, seule la nouvelle s'annonce.
         seo.conversation = Conversation(messages: [reply("m1"), reply("m2")])
         model.bots = [seo]

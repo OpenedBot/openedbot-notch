@@ -184,7 +184,10 @@ final class NoticeCenter {
         if setAsideInbox == nil {
             setAsideInbox = model.inbox
             setAsideApprovals = Self.remoteApprovals(model.bots)
+            // Une démonstration rejouée avant qu'un fil soit revenu garde ce qui avait été vu de lui.
             setAsideMessages = knownMessages
+            for (id, ids) in catchUpMessages { setAsideMessages[id, default: []].formUnion(ids) }
+            catchUpMessages = [:]
             if case .notice(let shown) = model.banner { setAsideBanner = shown.id }
         }
         reconcilesApprovals = false

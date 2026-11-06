@@ -196,8 +196,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startDemo(cycles: Int) {
         // Les fils que la session avait chargés : relus au retour (une démonstration rejouée garde
         // ceux de la session, pas ceux des bots fictifs).
-        if demo == nil, live != nil {
-            resumeThreads = Set(model.bots.compactMap { $0.conversation != nil ? $0.threadID : nil })
+        // Ceux qu'une démonstration précédente n'a pas encore pu relire restent à relire.
+        if demo == nil, let live {
+            resumeThreads = Set(model.bots.compactMap { $0.conversation != nil ? $0.threadID : nil }).union(live.catchUpThreads)
         }
         stopLive()
         feed.stop()
