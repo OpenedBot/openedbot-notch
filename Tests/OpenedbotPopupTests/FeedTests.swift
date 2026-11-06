@@ -240,6 +240,25 @@ struct OpenedbotFeedTests {
         #expect(!feed.isStreaming)
     }
 
+    @Test func aResponseCompletingAfterTheStopLeavesTheResumedSessionAlone() async throws {
+        let (_, model, t, account) = try make()
+        await signIn(account)
+        let feed = OpenedbotFeed(model: model, account: account, transport: SlowTransport(t),
+                                 timing: .init(debounce: .zero, poll: .seconds(3600), routinesEvery: 3600, reconnectCap: .zero))
+        await feed.refresh(threads: [])
+        t.on("/api/approvals/ap-1/respond", (202, #"{"decision":{"id":"d","entryHash":"h"}}"#))
+        let id = try #require(model.bot("b-sup")?.pending?.id)
+        feed.respond(approvalID: id, allow: true)
+        await waitUntil { t.calls.contains { $0.path == "/api/approvals/ap-1/respond" } }
+        // La démonstration arrête le flux ; la session reprend avec une autre demande du même bot.
+        feed.stop()
+        let next = Approval(remoteID: "ap-2", botID: "b-sup", runID: "r-2", tool: "shell", command: "ls", expiresAt: Date().addingTimeInterval(600))
+        model.update("b-sup") { $0.pending = next; $0.thread = [] }
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(model.bot("b-sup")?.pending?.id == next.id, "the predecessor's answer never closes the new request")
+        #expect(model.bot("b-sup")?.thread.isEmpty == true)
+    }
+
     @Test func theThreadsTheSessionHadLoadedAreRereadUntilReadOnce() async throws {
         let (feed, model, t, account) = try make()
         await signIn(account)

@@ -129,23 +129,27 @@ final class OpenedbotFeed: BotFeed {
     func respond(approvalID: UUID, allow: Bool) {
         guard let bot = model.bots.first(where: { $0.pending?.id == approvalID }), let remote = bot.pending?.remoteID else { return }
         struct Body: Encodable { var choice: String }
+        let started = generation
         Task { [weak self] in
             guard let self else { return }
             do {
                 let _: OpenedbotAPI.Empty = try await api.post("/api/approvals/\(remote)/respond", json: Body(choice: allow ? "once" : "deny"))
+                guard started == generation else { return }
                 note(.info, .send, allow ? tr("\(bot.name): approval allowed once", "\(bot.name) : approbation autorisée une fois")
                                           : tr("\(bot.name): approval denied", "\(bot.name) : approbation refusée"))
                 model.update(bot.id) { b in
-                    b.pending = nil
+                    if b.pending?.id == approvalID { b.pending = nil }
                     b.thread.append(ChatMessage(role: .system, text: allow ? tr("Allowed once", "Autorisé une fois") : tr("Denied", "Refusé")))
                 }
             } catch OpenedbotAuthError.http(409, let code) {
+                guard started == generation else { return }
                 // Déjà tranchée, expirée ou run fini : on retire la carte, le serveur a raison.
                 model.update(bot.id) { b in
-                    b.pending = nil
+                    if b.pending?.id == approvalID { b.pending = nil }
                     b.thread.append(ChatMessage(role: .system, text: Self.conflictText(code)))
                 }
             } catch {
+                guard started == generation else { return }
                 note(.error, .send, tr("\(bot.name): approval response rejected: \(Self.text(error))",
                                          "\(bot.name) : réponse à l'approbation refusée : \(Self.text(error))"))
                 model.update(bot.id) { b in b.thread.append(ChatMessage(role: .system, text: tr("Response not sent: \(Self.text(error))", "Réponse non envoyée : \(Self.text(error))"))) }
@@ -162,12 +166,14 @@ final class OpenedbotFeed: BotFeed {
         let body = Body(input: trimmed, attachments: attachments.isEmpty ? nil : attachments.map(\.wire), replyToId: replyTo)
         let key = UUID().uuidString.lowercased()
         model.update(botID) { b in b.thread.append(ChatMessage(role: .user, text: trimmed, attachments: attachments.map(\.name))) }
+        let generation = self.generation
         Task { [weak self] in
             guard let self else { return }
             do {
                 let started = Date()
                 let accepted: SendMessageAcceptedDto = try await api.post("/api/threads/\(thread)/messages", json: body,
                                                                            headers: ["Idempotency-Key": key])
+                guard generation == self.generation else { return }
                 let pieces = attachments.isEmpty ? "" : tr(" with \(attachments.count) attachment\(attachments.count > 1 ? "s" : "")",
                                                             " avec \(attachments.count) pièce\(attachments.count > 1 ? "s" : "")")
                 note(.info, .send, tr("\(bot.name): message accepted\(pieces), run \(Self.short(accepted.runId)) (\(Self.ms(since: started)))",
@@ -179,6 +185,7 @@ final class OpenedbotFeed: BotFeed {
                     }
                 }
             } catch {
+                guard generation == self.generation else { return }
                 let total = attachments.reduce(0) { $0 + $1.bytes }
                 let pieces = attachments.isEmpty ? "" : tr(" (\(attachments.count) attachment\(attachments.count > 1 ? "s" : ""), \(total) bytes)",
                                                             " (\(attachments.count) pièce\(attachments.count > 1 ? "s" : ""), \(total) octets)")
@@ -198,6 +205,7 @@ final class OpenedbotFeed: BotFeed {
         model.update(botID) { b in b.conversation?.messages[i].reactions = next.reactions }
         struct Body: Encodable { var emoji: String }
         let path = "/api/threads/\(thread)/messages/\(messageID)/reactions"
+        let started = generation
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -208,6 +216,7 @@ final class OpenedbotFeed: BotFeed {
                 note(.info, .send, next.added ? tr("\(bot.name): reaction \(emoji) added", "\(bot.name) : réaction \(emoji) ajoutée")
                                                : tr("\(bot.name): reaction \(emoji) removed", "\(bot.name) : réaction \(emoji) retirée"))
             } catch {
+                guard started == generation else { return }
                 note(.error, .send, tr("\(bot.name): reaction \(emoji) rejected: \(Self.text(error))", "\(bot.name) : réaction \(emoji) refusée : \(Self.text(error))"))
                 model.update(botID) { b in
                     if let j = b.conversation?.messages.firstIndex(where: { $0.id == messageID }) { b.conversation?.messages[j].reactions = before }
@@ -325,12 +334,14 @@ final class OpenedbotFeed: BotFeed {
     /// Le catalogue du runtime actif, gardé 30 s comme le cache serveur.
     func loadModelCatalog() async {
         if let at = catalogLoadedAt, Date().timeIntervalSince(at) < 30, model.modelCatalog != nil { return }
+        let started = generation
         var current = runtime
         if current == nil { current = await fetchRuntime() }
-        guard let r = current, let id = r.runtime?.id else { return }
+        guard started == generation, let r = current, let id = r.runtime?.id else { return }
         runtime = r
         do {
             let dto: RuntimeModelCatalogDto = try await api.get("/api/runtimes/\(id)/models")
+            guard started == generation else { return }
             model.modelCatalog = OpenedbotMapping.catalog(dto, runtime: r)
             catalogLoadedAt = Date()
         } catch {
@@ -343,9 +354,13 @@ final class OpenedbotFeed: BotFeed {
         struct Body: Encodable { var model: String?; var provider: String?; var reasoningEffort: String? }
         struct Mode: Encodable { var mode: String }
         let provider = modelID.flatMap { model.modelCatalog?.provider(of: $0)?.slug }
+        let started = generation
         let _: OpenedbotAPI.Empty = try await api.post("/api/bots/\(botID)", json: Body(model: modelID, provider: provider, reasoningEffort: effort), method: "PATCH")
+        // Le flux arrêté entre-temps (la démonstration) : le modèle n'est plus le sien.
+        guard started == generation else { return }
         if model.modelCatalog?.assignmentMode == "global", modelID != nil || effort != nil {
             let _: OpenedbotAPI.Empty = try await api.post("/api/runtimes/assignment-mode", json: Mode(mode: "per_bot"), method: "PUT")
+            guard started == generation else { return }
             model.modelCatalog?.assignmentMode = "per_bot"
         }
         model.update(botID) { b in
