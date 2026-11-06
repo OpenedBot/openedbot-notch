@@ -331,6 +331,33 @@ struct InboxTests {
         #expect(model.inbox.notices.filter { $0.kind == .message }.map(\.text) == ["Pendant la démo"], "announced once, the old one never")
     }
 
+    @Test func aThreadRereadLateAfterTheDemoAnnouncesOnlyWhatIsNew() async {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        model.plays = false
+        func reply(_ id: String) -> ConversationMessage {
+            ConversationMessage(id: id, role: .assistant, text: "Réponse \(id)", attachments: [], runID: nil, at: Date())
+        }
+        var seo = bot("seo", replies: [])
+        seo.conversation = Conversation(messages: [reply("m1")])
+        model.bots = [seo]
+        try? await Task.sleep(for: .milliseconds(50))
+        center.setAside()
+        model.bots = DemoBotFeed.roster(now: now)
+        try? await Task.sleep(for: .milliseconds(50))
+        center.restore()
+        // Le roster revient, mais le fil de seo n'a pas pu être relu.
+        model.bots = [bot("seo", replies: [])]
+        center.rosterLoaded()
+        try? await Task.sleep(for: .milliseconds(50))
+        // Relu ensuite : la réponse d'avant la démonstration reste vue, seule la nouvelle s'annonce.
+        seo.conversation = Conversation(messages: [reply("m1"), reply("m2")])
+        model.bots = [seo]
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(model.inbox.notices.filter { $0.kind == .message }.map(\.text) == ["Réponse m2"])
+    }
+
     /// Une demande d'accord en bannière quand la démonstration commence, et une panne en file derrière.
     private func approvalBannerSetAside(_ center: NoticeCenter, _ model: NotchModel) {
         model.plays = false

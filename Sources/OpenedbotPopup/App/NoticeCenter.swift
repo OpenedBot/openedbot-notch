@@ -26,6 +26,9 @@ final class NoticeCenter {
     /// La bannière de la session que la démonstration a interrompue : elle repasse en tête au retour
     /// si sa notification attend toujours (une demande d'accord encore ouverte, par exemple).
     private var setAsideBanner: UUID?
+    /// Les messages vus avant la démonstration des bots dont le fil n'est pas encore revenu (sa
+    /// relecture a échoué) : gardés jusqu'à ce qu'il revienne, pour ne pas réannoncer l'ancien.
+    private var catchUpMessages: [String: Set<String>] = [:]
     /// La démonstration est finie : la boîte de la session reviendra au premier roster du flux qui
     /// reprend, ses demandes d'accord recalées dessus.
     private var reconcilesApprovals = false
@@ -220,6 +223,7 @@ final class NoticeCenter {
         // roster est ensuite vu par le centre, pour ne pas les annoncer deux fois.
         announceReplies(previous: seen, bots: model.bots)
         snapshot(model.bots)
+        catchUpMessages = seen.filter { id, ids in !ids.isEmpty && model.bots.contains { $0.id == id && $0.conversation == nil } }
         // Les demandes arrivées pendant la démonstration : annoncées comme le flux l'aurait fait.
         let known = Set(before.values)
         for bot in model.bots {
@@ -236,7 +240,10 @@ final class NoticeCenter {
 
     private func rosterChanged() {
         let bots = model.bots
-        announceReplies(previous: knownMessages, bots: bots)
+        var previous = knownMessages
+        for (id, ids) in catchUpMessages { previous[id, default: []].formUnion(ids) }
+        announceReplies(previous: previous, bots: bots)
+        catchUpMessages = catchUpMessages.filter { id, _ in bots.contains { $0.id == id && $0.conversation == nil } }
         // Une demande d'accord répondue ailleurs (fenêtre, console) : plus de bannière ni de badge.
         for bot in bots {
             if let old = knownApprovals[bot.id], bot.pending?.id != old { resolve(old) }
