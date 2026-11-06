@@ -87,8 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.onDemo = { [weak self] cycles in self?.startDemo(cycles: cycles) }
         host.onEndDemo = { [weak self] in self?.endDemo() }
         // Les bots de la démonstration sont fictifs : aucune page de la console à ouvrir pour eux.
+        // Le reste (la console, la page des mises à jour) s'ouvre comme d'habitude.
         notch.onOpenConsole = { [weak self, weak host] path in
-            guard self?.demo == nil else { return }
+            guard self?.demo == nil || !DemoBotFeed.isFictional(path: path) else { return }
             host?.openConsole(path: path)
         }
         channel.start(onLine: { [weak host] line in host?.receive(line: line) },
@@ -316,7 +317,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func openBotInConsole(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        host?.openConsole(path: Self.consolePath(botID: id))
+        let path = Self.consolePath(botID: id)
+        guard demo == nil || !DemoBotFeed.isFictional(path: path) else { return }
+        host?.openConsole(path: path)
     }
     @objc private func openOpenedbot() { host?.openConsole(path: "/") }
     @objc private func keepOpen() { notch.togglePin() }

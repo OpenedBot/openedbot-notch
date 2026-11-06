@@ -115,6 +115,15 @@ struct DemoFeedTests {
         #expect(!feed.touched)
     }
 
+    @Test func onlyTheFictionalBotsHaveNoConsolePage() {
+        #expect(DemoBotFeed.isFictional(path: AppDelegate.consolePath(botID: DemoBotFeed.writingID)))
+        #expect(DemoBotFeed.isFictional(path: AppDelegate.consolePath(botID: DemoBotFeed.researchID)))
+        #expect(!DemoBotFeed.isFictional(path: AppDelegate.consolePath(botID: "b1")))
+        // La page des mises à jour et la console restent ouvrables pendant la démonstration.
+        #expect(!DemoBotFeed.isFictional(path: HostUpdate.consolePath))
+        #expect(!DemoBotFeed.isFictional(path: "/"))
+    }
+
     @Test func theHostDrivesTheDemo() {
         var sent: [HostProtocol.Outgoing] = []
         let host = HostTokenSource(send: { sent.append($0); return true })

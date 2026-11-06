@@ -15,6 +15,11 @@ import Foundation
 final class DemoBotFeed: BotFeed {
     static let researchID = "demo-recherche"
     static let writingID = "demo-redaction"
+    /// Une page de la console qui nomme un bot de la démonstration : elle n'existe pas.
+    static func isFictional(path: String) -> Bool {
+        [researchID, writingID].contains { path == AppDelegate.consolePath(botID: $0) }
+    }
+
     /// La durée d'un cycle, accord automatique compris, à l'échelle 1.
     static let cycleSeconds: Double = 12
 
