@@ -21,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var live: OpenedbotFeed?
     /// La démonstration demandée par openedbot (`demo`), nil sinon. Elle prime sur la session.
     private(set) var demo: DemoBotFeed?
+    /// Les fils de la session à relire quand elle reprend après la démonstration.
+    private var resumeThreads: Set<String> = []
     private(set) var notch: NotchWindowController!
     private var status: StatusItemController!
     private var settingsWindow: NSWindow?
@@ -166,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let f = OpenedbotFeed(model: model, account: tokens)
             f.onTransition = { [weak self] bot, transition in self?.handle(bot, transition) }
             f.onRosterLoaded = { [weak self] in self?.notices.rosterLoaded() }
+            f.firstThreads = resumeThreads
+            resumeThreads = []
             live = f
             notch.feed = f
             f.start()
@@ -190,6 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `demo` : la démonstration remplace les bots de la session (le flux openedbot s'arrête, il
     /// reprendra à `endDemo`). Rejouée depuis le début si elle tournait déjà.
     private func startDemo(cycles: Int) {
+        // Les fils que la session avait chargés : relus au retour (une démonstration rejouée garde
+        // ceux de la session, pas ceux des bots fictifs).
+        if demo == nil, live != nil {
+            resumeThreads = Set(model.bots.compactMap { $0.conversation != nil ? $0.threadID : nil })
+        }
         stopLive()
         feed.stop()
         let demo = self.demo ?? DemoBotFeed(model: model)

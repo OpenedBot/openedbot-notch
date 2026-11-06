@@ -240,6 +240,19 @@ struct OpenedbotFeedTests {
         #expect(!feed.isStreaming)
     }
 
+    @Test func theFirstRefreshRereadsTheThreadsTheSessionHadLoaded() async throws {
+        let (feed, model, t, account) = try make()
+        await signIn(account)
+        t.on("/api/threads/t-ops", (200, #"{"id":"t-ops","cursor":1,"messages":[],"runs":[],"workflows":[],"approvals":[]}"#))
+        // Ops, inactif, avait son fil chargé avant la démonstration : il est relu au retour.
+        feed.firstThreads = ["t-ops"]
+        feed.start()
+        defer { feed.stop() }
+        await waitUntil { model.bot("b-ops")?.conversation != nil }
+        #expect(t.calls.contains { $0.path == "/api/threads/t-ops" })
+        #expect(model.bot("b-ops")?.conversation != nil)
+    }
+
     @Test func aLoadedRosterIsAnnouncedEvenEmpty() async throws {
         let (feed, _, t, account) = try make()
         await signIn(account)

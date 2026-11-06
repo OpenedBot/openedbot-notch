@@ -29,6 +29,9 @@ final class OpenedbotFeed: BotFeed {
     private var seen: Set<String> = []
     /// Les fils qu'on relit à chaque rafraîchissement : ouverts dans une fenêtre, ou actifs.
     var openThreads: Set<String> = []
+    /// Les fils à relire dès la première relecture, en plus des actifs : ceux que la session avait
+    /// chargés avant la démonstration, pour qu'une réponse arrivée pendant elle se compare à eux.
+    var firstThreads: Set<String> = []
 
     /// Le rythme ; les tests le resserrent.
     struct Timing: Sendable {
@@ -98,7 +101,7 @@ final class OpenedbotFeed: BotFeed {
         model.sections = []
         mainTask = Task { [weak self] in
             guard let self else { return }
-            await refresh(threads: [])
+            await refresh(threads: firstThreads)
             // Arrêté pendant la première relecture : pas de flux d'événements orphelin.
             guard !Task.isCancelled else { return }
             streamTask = Task { [weak self] in await self?.streamForever() }
