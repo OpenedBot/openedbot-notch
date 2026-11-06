@@ -40,6 +40,10 @@ click to open the agent window: read the thread, approve or deny, reply. No need
 - **YOLO badge** (signed in, camera-notch island): a red `YOLO` badge and a countdown while a
   YOLO lease auto-approves a bot's writes on the host, and *Turn YOLO off everywhere* in the
   expanded island. See [YOLO leases](#yolo-leases).
+- **Update badge** (hosted, camera-notch island): a blue dot in the compact island when openedbot
+  has an update *ready* or *required*, and an *Update ready* / *Update required* row in the
+  expanded island that opens openedbot on its update settings. See
+  [Embedding in the desktop app](#embedding-in-the-desktop-app).
 - **Menu bar item**, four screen edges, settings window, English and French UI.
 
 An interactive HTML mockup of the design lives in [`design/index.html`](design/index.html)
@@ -133,9 +137,30 @@ otherwise):
 make bundle    # dist/OpenedbotPopup.app, with OpenedbotHostedProtocol 1 in its Info.plist
 ```
 
-The hosted-mode protocol (`Sources/OpenedbotPopup/Host/HostProtocol.swift`) mirrors
-[`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts),
-which is the reference: change both sides together.
+The hosted-mode protocol (`Sources/OpenedbotPopup/Host/HostProtocol.swift`) mirrors the desktop
+host, which is the reference: the Tauri shell's
+[`apps/desktop-tauri/src-tauri/src/popup.rs`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop-tauri/src-tauri/src/popup.rs)
+(and the Electron shell's
+[`apps/desktop/src/shared/popup-protocol.ts`](https://github.com/OpenedBot/openedbot/blob/main/apps/desktop/src/shared/popup-protocol.ts)).
+Change both sides together.
+
+Host → popup messages are `hello`, `token`, `signedIn`, `signedOut` and `updateState`; popup →
+host messages are `ready`, `token`, `openConsole`, `signOut` and `fatal`. A message type the popup
+does not know is logged and ignored, so the host can add one without a protocol bump.
+
+`updateState` is the app's update status, sent on every change and once after `hello` +
+`signedIn`/`signedOut`:
+
+```json
+{"type":"updateState","status":"ready","version":"1.0.4"}
+```
+
+`status` is 1 to 32 lowercase letters (`idle`, `checking`, `available`, `downloading`, `ready`,
+`installing`, `error`, `required`; any other word shows nothing); `version` is absent, `null`, or 1
+to 32 digits and dots (the downloaded version for `ready`, the minimum for `required`). Anything
+else drops the line. Only `ready` and `required` show the badge; the state survives `signedOut`
+and is cleared when the host closes stdin. Clicking the row sends
+`{"type":"openConsole","path":"/settings/updates"}`; the notch never installs or restarts anything.
 
 ## Configuration
 
@@ -161,7 +186,7 @@ Sources/OpenedbotPopup
 ├── Host/    hosted-mode stdio protocol
 ├── Model/   domain models, geometry, layout rules, mock feed
 └── Notch/   notch panel, rings, cards, agent window
-Tests/OpenedbotPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases)
+Tests/OpenedbotPopupTests   unit tests (geometry, layout rules, mock feed, auth, host protocol, YOLO leases, update badge)
 Resources/            Info.plist, bot artworks, faces, provider marks
 design/               static HTML mockup
 ```

@@ -30,6 +30,9 @@ final class HostTokenSource: TokenSource {
 
     /// `hello` invalide ou d'une autre version : la popup doit s'arrêter avec ce code.
     @ObservationIgnored var onFatal: (String) -> Void = { _ in }
+    /// L'état de la mise à jour de l'app annoncé par l'hôte (`updateState`), et `.none` quand l'hôte
+    /// ferme. Il survit à `signedOut` : une mise à jour concerne l'app, pas la session.
+    @ObservationIgnored var onUpdate: (HostUpdate) -> Void = { _ in }
 
     init(send: @escaping (HostProtocol.Outgoing) -> Bool, timeout: Duration = .seconds(20)) {
         self.send = send
@@ -71,13 +74,17 @@ final class HostTokenSource: TokenSource {
             dropSession()
         case .signedIn:
             isSignedIn = true
+        case .updateState(let status, let version):
+            onUpdate(HostUpdate(status: status, version: version))
         }
     }
 
-    /// stdin fermé : l'hôte est parti. Les demandes en cours échouent, rien d'autre ne partira.
+    /// stdin fermé : l'hôte est parti. Les demandes en cours échouent, rien d'autre ne partira, et
+    /// l'état de mise à jour qu'il avait annoncé ne vaut plus.
     func hostClosed() {
         closed = true
         failPending(OpenedbotAuthError.cancelled)
+        onUpdate(.none)
     }
 
     // MARK: TokenSource

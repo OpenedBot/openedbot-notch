@@ -59,6 +59,8 @@ final class NotchModel {
     var runtime: RuntimeStatus?
     /// Les baux YOLO actifs de l'organisation (`YoloMonitor`) ; vide en démo et sans session.
     var yolo = YoloState()
+    /// La mise à jour de l'app annoncée par openedbot (`updateState`) ; rien en autonome.
+    var update = HostUpdate.none
     /// Le journal en direct : réglages › Journal et la carte du runtime le lisent.
     var journal = Journal()
     /// Le catalogue de modèles du runtime, pour la puce de la fenêtre d'agent.

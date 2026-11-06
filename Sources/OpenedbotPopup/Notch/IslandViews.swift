@@ -99,6 +99,7 @@ struct IslandCompactView: View {
                             .accessibilityLabel(tr("\(compact.unread) unread notifications", "\(compact.unread) notifications non lues"))
                         }
                         if compact.yolo { YoloBadge(leases: model.yolo.leases) }
+                        if let update = compact.update { UpdateDot(badge: update) }
                     }
                     .font(.system(size: 11, weight: .semibold)).monospacedDigit()
                     .lineLimit(1).fixedSize()
@@ -149,18 +150,20 @@ struct IslandPanelView: View {
     var onOpenNotice: (Notice) -> Void = { _ in }
     var onClearNotices: () -> Void = {}
     var onKillYolo: () -> Void = {}
+    var onOpenUpdates: () -> Void = {}
 
     var body: some View {
         let g = geometry
         let ear = NotchGeometry.islandEar
         let yolo = !model.yolo.leases.isEmpty
+        let update = model.update.badge != nil
         // Les demandes d'accord encore ouvertes ont leur carte : pas de doublon dans la liste.
         let pendingIDs = Set(model.bots.compactMap { $0.pending?.id })
         let approvalsShown = Island.approvals(bots: model.bots).count
         let recent = Array(model.inbox.notices.filter { n in n.approvalID.map { !pendingIDs.contains($0) } ?? true }
             .prefix(approvalsShown > 0 ? 3 : Island.noticeLimit))
-        // Le bandeau YOLO prend la place d'une demande d'accord.
-        let rowLimit = Island.rowLimit(approvals: approvalsShown + (yolo ? 1 : 0), notices: recent.count)
+        // Le bandeau YOLO prend la place d'une demande d'accord, la ligne de mise à jour celle d'un bot.
+        let rowLimit = Island.rowLimit(approvals: approvalsShown + (yolo ? 1 : 0), notices: recent.count + (update ? 2 : 0))
         let inner = NotchGeometry.islandWidth - 2 * ear - 24
         let side = max(0, (inner - (g.restLength ?? 0)) / 2)
         let rows = Island.rows(bots: model.bots)
@@ -194,6 +197,8 @@ struct IslandPanelView: View {
             if yolo {
                 IslandYoloView(model: model, onKill: onKillYolo)
             }
+
+            if update { IslandUpdateRow(update: model.update, open: onOpenUpdates) }
 
             if !recent.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {

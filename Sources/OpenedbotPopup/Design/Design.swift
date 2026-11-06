@@ -22,6 +22,8 @@ enum Palette {
     static let critical = Color(hex: 0xFF3F00)
     /// L'anneau ambre qui pulse quand une session attend l'utilisateur.
     static let waiting = Color(hex: 0xF2A93B)
+    /// Le bleu « info » de la console, dans sa version sombre (#1447e6 en clair) : l'île est toujours sombre.
+    static let info = Color(hex: 0x8EC5FF)
     static let textPrimary = Color.white
     static let textSecondary = Color(hex: 0x808080)
 }

@@ -117,7 +117,8 @@ final class NotchWindowController {
                                       onLater: { [weak self] in self?.notices?.dismissBanner() },
                                       onShowAll: { [weak self] in self?.showAllNotices() },
                                       onClearNotices: { [weak self] in self?.notices?.clear() },
-                                      onKillYolo: { [weak self] in self?.yolo?.kill() })
+                                      onKillYolo: { [weak self] in self?.yolo?.kill() },
+                                      onOpenUpdates: { [weak self] in self?.onOpenConsole?(HostUpdate.consolePath) })
         panel.setFrame(geometry.panelFrame, display: true)
     }
 
@@ -204,7 +205,8 @@ final class NotchWindowController {
         var wingsSide: CGFloat?
         if geometry.isIsland, !model.showsBody {
             let compact = Island.compact(bots: model.bots, unread: model.inbox.unreadCount,
-                                         latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()))
+                                         latestUnreadBotID: model.inbox.unread.first?.botID, yolo: model.yolo.isActive(at: Date()),
+                                         update: model.update.badge)
             if compact != nil || model.islandFlash != nil {
                 wingsSide = Island.sideWidth(compact: compact, flash: model.islandFlash, cameraHeight: geometry.inset)
             }

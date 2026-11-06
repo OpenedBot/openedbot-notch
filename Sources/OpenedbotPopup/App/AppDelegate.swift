@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(3)
         }
         self.host = host
+        host.onUpdate = { [weak self] update in self?.model.update = update }
         notch.onOpenConsole = { [weak host] path in host?.openConsole(path: path) }
         channel.start(onLine: { [weak host] line in host?.receive(line: line) },
                       onEOF: { [weak host] in

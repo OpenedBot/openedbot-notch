@@ -2,11 +2,23 @@ import Foundation
 
 /// Le protocole hôte ↔ popup, v1 : une ligne JSON par message, de l'hôte sur notre stdin, vers
 /// l'hôte sur notre stdout. Miroir du protocole de l'app bureau openedbot, qui fait foi
-/// (OpenedBot/openedbot, apps/desktop/src/shared/popup-protocol.ts) : changer les deux ensemble.
+/// (OpenedBot/openedbot : apps/desktop-tauri/src-tauri/src/popup.rs, l'hôte Tauri qui envoie
+/// `updateState` ; apps/desktop/src/shared/popup-protocol.ts pour l'ancien shell Electron) :
+/// changer les deux ensemble.
 ///
 /// Règles : une version inconnue arrête la session ; une ligne mal formée est ignorée et
 /// journalisée sans son contenu ; jamais de refresh token sur ce canal ; jamais de jeton dans
-/// un journal. Les champs inconnus sont ignorés, pour qu'une v1 puisse s'enrichir.
+/// un journal. Les champs inconnus sont ignorés, pour qu'une v1 puisse s'enrichir ; un type
+/// inconnu aussi (`.unknownType`, journalisé), pour qu'un hôte plus récent ne casse pas la popup.
+///
+/// Hôte → popup : `hello`, `token`, `signedIn`, `signedOut`, et `updateState`
+/// (`{"type":"updateState","status":"ready","version":"1.0.4"}`) : l'état de la mise à jour de
+/// l'app, envoyé à chaque changement et une fois après `hello` + `signedIn`/`signedOut`. `status`
+/// est un mot en minuscules (`idle`, `checking`, `available`, `downloading`, `ready`, `installing`,
+/// `error`, `required` ; un autre mot ne montre rien) ; `version` est absent, null, ou des
+/// chiffres et des points. Ajouté dans la v1 sans changer de version : une popup plus ancienne
+/// l'ignore comme tout type inconnu.
+/// Popup → hôte : `ready`, `token`, `openConsole`, `signOut`, `fatal`.
 enum HostProtocol {
     static let version = 1
     /// La plus longue ligne acceptée, en octets. Un vrai message en fait quelques centaines.
@@ -18,6 +30,9 @@ enum HostProtocol {
         case token(TokenReply)
         case signedOut
         case signedIn
+        /// L'état de la mise à jour de l'app chez l'hôte. `status` reste le mot reçu : c'est
+        /// `HostUpdate` qui décide quoi montrer, un mot inconnu ne montre rien.
+        case updateState(status: String, version: String?)
     }
 
     /// Les trois valeurs sont nulles ensemble. Nulles sans `unavailable` : pas de session.
@@ -76,6 +91,16 @@ enum HostProtocol {
             return .success(.token(reply))
         case "signedOut": return .success(.signedOut)
         case "signedIn": return .success(.signedIn)
+        case "updateState":
+            guard let status = f["status"] as? String, isWord(status) else { return .failure(.invalidFields) }
+            // Absent ou null : version inconnue. Présent : des chiffres et des points, rien d'autre.
+            let version: String?
+            switch f["version"] {
+            case nil, is NSNull: version = nil
+            case let v as String where isVersion(v): version = v
+            default: return .failure(.invalidFields)
+            }
+            return .success(.updateState(status: status, version: version))
         default: return .failure(.unknownType)
         }
     }
@@ -131,6 +156,16 @@ enum HostProtocol {
 
     private static func isID(_ s: String) -> Bool {
         (1...64).contains(s.count) && s.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "-" || $0 == "_" }
+    }
+
+    /// Un mot d'état : 1 à 32 lettres ASCII minuscules.
+    private static func isWord(_ s: String) -> Bool {
+        (1...32).contains(s.unicodeScalars.count) && s.unicodeScalars.allSatisfy { ("a"..."z").contains($0) }
+    }
+
+    /// Une version : 1 à 32 chiffres ASCII et points.
+    private static func isVersion(_ s: String) -> Bool {
+        (1...32).contains(s.unicodeScalars.count) && s.unicodeScalars.allSatisfy { ("0"..."9").contains($0) || $0 == "." }
     }
 
     private static func string(_ value: Any?, max: Int) -> String? {
