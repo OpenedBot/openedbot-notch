@@ -33,6 +33,10 @@ final class OpenedbotFeed: BotFeed {
     /// jusqu'à ce que chacun ait été lu une fois (ou que son bot ait quitté le roster), pour qu'une
     /// réponse arrivée pendant elle s'annonce même si la première relecture échoue.
     var catchUpThreads: Set<String> = []
+    /// Les bots qui travaillaient quand la démonstration a pris l'encoche. La première relecture après
+    /// elle part d'un roster vide et ne compare rien : un run fini ou échoué entre-temps s'annonce
+    /// contre eux, une fois (leurs fils sont dans `catchUpThreads`, pour savoir s'il a échoué).
+    var resumeBaseline: [String: Bot] = [:]
 
     /// Le rythme ; les tests le resserrent.
     struct Timing: Sendable {
@@ -311,6 +315,13 @@ final class OpenedbotFeed: BotFeed {
             }
 
             announceTransitions(from: previous, to: bots)
+            if !resumeBaseline.isEmpty {
+                for bot in bots {
+                    guard let old = resumeBaseline[bot.id], let ended = Self.runEnd(from: old, to: bot) else { continue }
+                    onTransition?(bot, ended)
+                }
+                resumeBaseline = [:]
+            }
             model.bots = bots
             // Les images importées se chargent dès le roster : l'encoche réduite n'en montre que trois,
             // le menu de la barre se fige à l'ouverture ; aucune surface ne doit attendre la sienne.
@@ -459,12 +470,16 @@ final class OpenedbotFeed: BotFeed {
             guard let old = previous[bot.id] else { continue }
             if old.runtime.connected != bot.runtime.connected { onTransition?(bot, bot.runtime.connected ? .back : .offline); continue }
             if bot.activity == .waiting, old.activity != .waiting { onTransition?(bot, .waiting); continue }
-            if old.activity == .working, bot.activity == .success || bot.activity == .idle {
-                // Le run suivi a-t-il échoué ? Une erreur ne s'annonce pas comme un run fini.
-                let failed = old.activeRun.flatMap { run in bot.runs.first { $0.id == run.id } }?.status == .failed
-                onTransition?(bot, failed ? .failed : .finished)
-            }
+            if let ended = Self.runEnd(from: old, to: bot) { onTransition?(bot, ended) }
         }
+    }
+
+    /// Un bot qui travaillait et ne travaille plus : son run a fini, ou échoué (une erreur ne
+    /// s'annonce pas comme un run fini).
+    private static func runEnd(from old: Bot, to bot: Bot) -> FeedTransition? {
+        guard old.activity == .working, bot.activity == .success || bot.activity == .idle else { return nil }
+        let failed = old.activeRun.flatMap { run in bot.runs.first { $0.id == run.id } }?.status == .failed
+        return failed ? .failed : .finished
     }
 
     // MARK: Flux

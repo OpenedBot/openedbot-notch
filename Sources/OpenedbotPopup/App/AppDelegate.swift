@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var demo: DemoBotFeed?
     /// Les fils de la session à relire quand elle reprend après la démonstration.
     private var resumeThreads: Set<String> = []
+    /// Les bots qui travaillaient avant la démonstration : leur run fini pendant elle s'annonce au retour.
+    private var resumeBaseline: [String: Bot] = [:]
     private(set) var notch: NotchWindowController!
     private var status: StatusItemController!
     private var settingsWindow: NSWindow?
@@ -169,7 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             f.onTransition = { [weak self] bot, transition in self?.handle(bot, transition) }
             f.onRosterLoaded = { [weak self] in self?.notices.rosterLoaded() }
             f.catchUpThreads = resumeThreads
+            f.resumeBaseline = resumeBaseline
             resumeThreads = []
+            resumeBaseline = [:]
             live = f
             notch.feed = f
             f.start()
@@ -198,7 +202,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ceux de la session, pas ceux des bots fictifs).
         // Ceux qu'une démonstration précédente n'a pas encore pu relire restent à relire.
         if demo == nil, let live {
-            resumeThreads = Set(model.bots.compactMap { $0.conversation != nil ? $0.threadID : nil }).union(live.catchUpThreads)
+            let working = model.bots.filter { $0.activity == .working }
+            resumeThreads = Set(model.bots.compactMap { $0.conversation != nil ? $0.threadID : nil })
+                .union(working.compactMap(\.threadID)).union(live.catchUpThreads)
+            // Une démonstration rejouée avant la première relecture garde la référence d'avant.
+            resumeBaseline = live.resumeBaseline.merging(working.map { ($0.id, $0) }) { kept, _ in kept }
         }
         stopLive()
         feed.stop()
