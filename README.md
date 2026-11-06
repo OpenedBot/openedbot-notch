@@ -30,6 +30,11 @@ click to open the agent window: read the thread, approve or deny, reply. No need
 
 - **One ring per bot**: avatar in the centre, run progress as an arc coloured by state
   (running, awaiting approval, completed, runtime offline), amber badge when an approval waits.
+- **Same avatar as the console** everywhere (ring, list, cards, agent window, menu-bar menu):
+  an uploaded image (`/api/attachments/:id`, fetched with the session, cached in memory as a
+  128 px thumbnail, the drawn face if it cannot load), a catalogue artwork, or the drawn face.
+  `Resources/bots` is a byte copy of the console's `public/bots` (all 33 artworks); a test fails
+  if one is missing.
 - **Hover card**: bot, runtime, model, permission mode, routines, current runs, pending approval
   with *Deny* / *Allow once*.
 - **Agent window**: thread (messages, tool calls), inline approval, composer. One window per agent.

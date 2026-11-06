@@ -305,10 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func menuIcon(for bot: Bot) -> NSImage? {
-        guard let image = Avatars.image(for: bot.artwork) else { return nil }
-        let icon = image.copy() as! NSImage
-        icon.size = NSSize(width: 16, height: 16)
-        return icon
+        AvatarView.menuImage(for: bot)
     }
 
     /// Le chemin de la console pour un bot : son fil unique, `/bot/:botId` (`route-tree.tsx`).

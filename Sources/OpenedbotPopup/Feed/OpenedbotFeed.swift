@@ -89,6 +89,8 @@ final class OpenedbotFeed: BotFeed {
     var isStreaming: Bool { streamTask != nil }
     /// Un roster vient d'être relu et posé dans le modèle, vide compris.
     var onRosterLoaded: (() -> Void)?
+    /// Les images servies avec la session ; une instance à part dans les tests.
+    var images = RemoteImages.shared
 
     // MARK: BotFeed
 
@@ -96,7 +98,7 @@ final class OpenedbotFeed: BotFeed {
         stop()
         stopped = false
         let api = self.api
-        RemoteImages.shared.loader = { path in try await api.data(path) }
+        images.loader = { path in try await api.data(path) }
         setState(.connecting)
         model.bots = []
         model.sections = []
@@ -121,8 +123,8 @@ final class OpenedbotFeed: BotFeed {
         mainTask?.cancel(); mainTask = nil
         streamTask?.cancel(); streamTask = nil
         refreshTask?.cancel(); refreshTask = nil
-        RemoteImages.shared.loader = nil
-        RemoteImages.shared.reset()
+        images.loader = nil
+        images.reset()
         setState(nil)
     }
 
@@ -310,6 +312,13 @@ final class OpenedbotFeed: BotFeed {
 
             announceTransitions(from: previous, to: bots)
             model.bots = bots
+            // Les images importées se chargent dès le roster : l'encoche réduite n'en montre que trois,
+            // le menu de la barre se fige à l'ouverture ; aucune surface ne doit attendre la sienne.
+            for bot in bots {
+                if case .uploaded(let path) = AvatarSource.resolve(seed: bot.id, face: bot.avatarFace) {
+                    images.load(path, maxPixels: Avatars.thumbnailPixels)
+                }
+            }
             onRosterLoaded?()
             note(.info, .api, tr("refresh: \(bots.count) bots, \(snapshots.count) thread\(snapshots.count > 1 ? "s" : ""), cursor \(cursor) (\(Self.ms(since: now)))",
                                  "relecture : \(bots.count) bots, \(snapshots.count) fil\(snapshots.count > 1 ? "s" : ""), curseur \(cursor) (\(Self.ms(since: now)))"),

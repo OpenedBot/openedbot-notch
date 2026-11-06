@@ -185,6 +185,26 @@ struct OpenedbotFeedTests {
         #expect(model.feedState == nil) // `start()` n'a pas été appelé : pas de flux SSE dans ce test
     }
 
+    @Test func anUploadedAvatarIsFetchedAsSoonAsTheRosterArrives() async throws {
+        let (feed, model, t, account) = try make()
+        t.on("/api/bots", (200, Self.roster.replacingOccurrences(of: #""face":{"artwork":"explorer"}"#,
+                                                                  with: #""face":{"artwork":"/api/attachments/att-sup","palette":"rose"}"#)))
+        let images = RemoteImages()
+        final class Paths: @unchecked Sendable { var list: [String] = [] }
+        let paths = Paths()
+        images.loader = { path in paths.list.append(path); throw OpenedbotAuthError.http(status: 404, code: nil) }
+        feed.images = images
+        await signIn(account)
+        await feed.refresh(threads: [])
+        #expect(AvatarSource.resolve(seed: "b-sup", face: model.bot("b-sup")?.avatarFace) == .uploaded(path: "/api/attachments/att-sup"))
+        for _ in 0..<200 where !images.failed("/api/attachments/att-sup", maxPixels: Avatars.thumbnailPixels) {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        // Demandée sans qu'aucune vue ne l'affiche ; refusée, elle laisse la place au visage bloub.
+        #expect(paths.list == ["/api/attachments/att-sup"])
+        #expect(images.failed("/api/attachments/att-sup", maxPixels: Avatars.thumbnailPixels))
+    }
+
     /// Des réponses qui arrivent en retard : la relecture est en vol quand le flux s'arrête.
     final class SlowTransport: HTTPTransport, @unchecked Sendable {
         let inner: StubTransport
