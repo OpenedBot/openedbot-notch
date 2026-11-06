@@ -33,9 +33,9 @@ final class OpenedbotFeed: BotFeed {
     /// jusqu'à ce que chacun ait été lu une fois (ou que son bot ait quitté le roster), pour qu'une
     /// réponse arrivée pendant elle s'annonce même si la première relecture échoue.
     var catchUpThreads: Set<String> = []
-    /// Les bots qui travaillaient quand la démonstration a pris l'encoche. La première relecture après
-    /// elle part d'un roster vide et ne compare rien : un run fini ou échoué entre-temps s'annonce
-    /// contre eux, une fois (leurs fils sont dans `catchUpThreads`, pour savoir s'il a échoué).
+    /// Les bots qui travaillaient quand la démonstration a pris l'encoche. La relecture après elle part
+    /// d'un roster vide et ne compare rien : un run fini ou échoué entre-temps s'annonce contre eux, une
+    /// fois, dès que le fil du bot a pu être relu (sans ses runs, on ne sait pas s'il a fini ou échoué).
     var resumeBaseline: [String: Bot] = [:]
 
     /// Le rythme ; les tests le resserrent.
@@ -280,6 +280,7 @@ final class OpenedbotFeed: BotFeed {
             var threads = requested.union(openThreads).union(catchUpThreads)
             for dto in roster.bots where dto.running == true || dto.awaitingApproval == true { threads.insert(dto.threadId) }
             for bot in bots where previous[bot.id]?.runs.contains(where: \.isLive) == true { threads.insert(bot.threadID ?? "") }
+            for bot in bots where resumeBaseline[bot.id] != nil { threads.insert(bot.threadID ?? "") }
             threads.remove("")
             let snapshots = await fetchSnapshots(threads)
             guard started == generation else { return }
@@ -316,11 +317,15 @@ final class OpenedbotFeed: BotFeed {
 
             announceTransitions(from: previous, to: bots)
             if !resumeBaseline.isEmpty {
+                // Seulement contre un fil relu : sans ses runs, le bot paraît au repos alors que le run
+                // tourne peut-être encore, ou a échoué. Le fil illisible est retenté à la relecture suivante.
                 for bot in bots {
-                    guard let old = resumeBaseline[bot.id], let ended = Self.runEnd(from: old, to: bot) else { continue }
-                    onTransition?(bot, ended)
+                    guard let old = resumeBaseline[bot.id], let thread = bot.threadID, snapshots[thread] != nil else { continue }
+                    resumeBaseline[bot.id] = nil
+                    if let ended = Self.runEnd(from: old, to: bot) { onTransition?(bot, ended) }
                 }
-                resumeBaseline = [:]
+                let waiting = Set(bots.compactMap { $0.threadID != nil ? $0.id : nil })
+                resumeBaseline = resumeBaseline.filter { waiting.contains($0.key) }
             }
             model.bots = bots
             // Les images importées se chargent dès le roster : l'encoche réduite n'en montre que trois,

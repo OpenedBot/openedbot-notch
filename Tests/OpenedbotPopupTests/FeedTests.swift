@@ -381,14 +381,20 @@ struct OpenedbotFeedTests {
     }
 
     /// Support travaillait quand la démonstration a pris l'encoche ; son run a fini (ou échoué) pendant elle.
-    private func resumeAfterDemo(runStatus: String) async throws -> (seen: [(String, FeedTransition)], second: [(String, FeedTransition)]) {
+    private func resumeAfterDemo(runStatus: String, snapshotFailsFirst: Bool = false) async throws
+        -> (seen: [(String, FeedTransition)], second: [(String, FeedTransition)]) {
         let (feed, _, t, account) = try make()
         await signIn(account)
         t.on("/api/bots", (200, Self.roster.replacingOccurrences(of: "\"awaitingApproval\":true,\"running\":true", with: "\"awaitingApproval\":false,\"running\":false")))
         t.on("/api/inbox", (200, #"{"items":[],"counts":{"approval":0,"needsReview":0,"needsYou":0,"total":0}}"#))
-        t.on("/api/threads/t-sup", (200, Self.snapshot(now: Date())
+        let snapshot = Self.snapshot(now: Date())
             .replacingOccurrences(of: "\"status\":\"awaiting_approval\",\"input\"", with: "\"status\":\"\(runStatus)\",\"input\"")
-            .replacingOccurrences(of: "\"status\":\"pending\"", with: "\"status\":\"approved\"")))
+            .replacingOccurrences(of: "\"status\":\"pending\"", with: "\"status\":\"approved\"")
+        if snapshotFailsFirst {
+            t.on("/api/threads/t-sup", (503, #"{"error":{"code":"UNAVAILABLE"}}"#), (200, snapshot))
+        } else {
+            t.on("/api/threads/t-sup", (200, snapshot))
+        }
         let runtime = BotRuntime(name: "vps-paris", model: "m", mode: "auto", connected: true, lastSeenAt: Date(), connectorVersion: "", latestVersion: nil, downSince: nil)
         let before = Bot(id: "b-sup", name: "Support", threadID: "t-sup", runtime: runtime,
                          runs: [BotRun(id: "r-1", kind: .dm, title: "t", detail: "", status: .running, usedSteps: 1, maxSteps: 8, tokens: 0, since: Date())])
@@ -411,6 +417,13 @@ struct OpenedbotFeedTests {
         let failed = try await resumeAfterDemo(runStatus: "error")
         #expect(failed.seen.map(\.1) == [.failed])
         #expect(failed.second.isEmpty)
+    }
+
+    @Test func anUnreadableThreadDefersTheAnnouncementInsteadOfGuessing() async throws {
+        // Fil illisible à la première relecture : rien (ni « fini » deviné) ; relu ensuite : « échoué », une fois.
+        let r = try await resumeAfterDemo(runStatus: "error", snapshotFailsFirst: true)
+        #expect(r.seen.isEmpty)
+        #expect(r.second.map(\.0) == ["b-sup"] && r.second.map(\.1) == [.failed])
     }
 
     @Test func transitionsAreAnnouncedBetweenRefreshes() async throws {
