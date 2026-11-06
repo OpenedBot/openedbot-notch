@@ -201,6 +201,30 @@ struct InboxTests {
         #expect(model.inbox.notices.isEmpty && model.inbox.unreadCount == 0)
     }
 
+    @Test func approvalsRestoredAfterTheDemoFollowTheResumedFeed() async {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        model.plays = false
+        // Avant la démonstration : une demande en attente sur seo, une sur ops.
+        var saved = Inbox()
+        saved.add(notice(.approval, "seo", approval: UUID()))
+        saved.add(notice(.approval, "ops", at: 1, approval: UUID()))
+        center.restore(saved)
+        // Le flux reprend : seo attend toujours (sous une nouvelle identité), ops a été répondu.
+        var seo = bot("seo", replies: [])
+        seo.pending = Approval(botID: "seo", runID: "r", tool: "shell", command: "ls", expiresAt: now.addingTimeInterval(600))
+        let resumed = try! #require(seo.pending?.id)
+        model.bots = [seo, bot("ops", replies: [])]
+        await waitUntil { model.inbox.unreadCount == 1 }
+        #expect(model.inbox.notices.first { $0.botID == "seo" }?.approvalID == resumed)
+        #expect(model.inbox.notices.first { $0.botID == "ops" }?.read == true)
+        // Répondue ensuite, celle de seo se ferme comme les autres.
+        model.update("seo") { $0.pending = nil }
+        await waitUntil { model.inbox.unreadCount == 0 }
+        #expect(model.inbox.unreadCount == 0)
+    }
+
     @Test func theDemoNeverBecomesANotification() async {
         let model = NotchModel()
         let center = NoticeCenter(model: model)

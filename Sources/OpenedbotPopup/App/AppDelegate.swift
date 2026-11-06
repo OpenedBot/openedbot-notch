@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         demo.stop()
         self.demo = nil
         notch.onInteraction = nil
-        if let savedInbox { model.inbox = savedInbox }
+        if let savedInbox { notices.restore(savedInbox) }
         savedInbox = nil
         model.edgeOverride = nil
         model.isExpanded = false

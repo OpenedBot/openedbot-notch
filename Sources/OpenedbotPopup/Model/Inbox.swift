@@ -145,6 +145,20 @@ struct Inbox: Equatable, Sendable {
     }
 
     /// Une demande d'accord répondue (ici, dans la fenêtre ou ailleurs) : lue, et plus de bannière.
+    /// La boîte rendue après la démonstration, face au premier état du flux qui reprend : chaque
+    /// demande d'accord prend l'identité locale que le flux vient de donner à la demande en
+    /// attente de son bot, ou se ferme si elle a été répondue entre-temps.
+    mutating func reconcileApprovals(pending: [String: UUID]) {
+        for i in notices.indices where notices[i].approvalID != nil {
+            if let id = pending[notices[i].botID] {
+                notices[i].approvalID = id
+            } else {
+                notices[i].read = true
+                queue.removeAll { $0 == notices[i].id }
+            }
+        }
+    }
+
     mutating func resolveApproval(_ approvalID: UUID) {
         for i in notices.indices where notices[i].approvalID == approvalID {
             notices[i].read = true

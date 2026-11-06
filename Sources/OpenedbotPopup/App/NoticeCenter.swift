@@ -16,6 +16,10 @@ final class NoticeCenter {
     /// La démonstration joue : ses bots sont fictifs, rien d'eux ne devient une notification.
     var isMuted: () -> Bool = { false }
 
+    /// La boîte de la session vient d'être rendue (fin de la démonstration) : ses demandes
+    /// d'accord se recalent sur le premier roster du flux qui reprend.
+    private var reconcilesApprovals = false
+
     private var bannerWork: Task<Void, Never>?
     private var readWork: Task<Void, Never>?
     private var hovering = false
@@ -158,8 +162,20 @@ final class NoticeCenter {
         }
     }
 
+    /// Rend la boîte de la session mise de côté pendant la démonstration. Le flux qui reprend
+    /// donne de nouvelles identités à ses demandes d'accord : elles se recalent à son premier roster.
+    func restore(_ inbox: Inbox) {
+        model.inbox = inbox
+        reconcilesApprovals = true
+    }
+
     private func rosterChanged() {
         let bots = model.bots
+        if reconcilesApprovals, !isMuted(), !bots.isEmpty {
+            reconcilesApprovals = false
+            let pending = Dictionary(bots.compactMap { b in b.pending.map { (b.id, $0.id) } }, uniquingKeysWith: { a, _ in a })
+            model.inbox.reconcileApprovals(pending: pending)
+        }
         // Les réponses des bots, une par bot, sauf si sa fenêtre est ouverte.
         for reply in MessageDiff.replies(previous: knownMessages, bots: bots, since: startedAt) where !isMuted() && !isDialogOpen(reply.botID) {
             let more = reply.count > 1 ? tr(" (+\(reply.count - 1))", " (+\(reply.count - 1))") : ""
