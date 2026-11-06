@@ -29,9 +29,10 @@ final class OpenedbotFeed: BotFeed {
     private var seen: Set<String> = []
     /// Les fils qu'on relit à chaque rafraîchissement : ouverts dans une fenêtre, ou actifs.
     var openThreads: Set<String> = []
-    /// Les fils à relire dès la première relecture, en plus des actifs : ceux que la session avait
-    /// chargés avant la démonstration, pour qu'une réponse arrivée pendant elle se compare à eux.
-    var firstThreads: Set<String> = []
+    /// Les fils que la session avait chargés avant la démonstration : relus à chaque relecture
+    /// jusqu'à ce que chacun ait été lu une fois (ou que son bot ait quitté le roster), pour qu'une
+    /// réponse arrivée pendant elle s'annonce même si la première relecture échoue.
+    var catchUpThreads: Set<String> = []
 
     /// Le rythme ; les tests le resserrent.
     struct Timing: Sendable {
@@ -101,7 +102,7 @@ final class OpenedbotFeed: BotFeed {
         model.sections = []
         mainTask = Task { [weak self] in
             guard let self else { return }
-            await refresh(threads: firstThreads)
+            await refresh(threads: [])
             // Arrêté pendant la première relecture : pas de flux d'événements orphelin.
             guard !Task.isCancelled else { return }
             streamTask = Task { [weak self] in await self?.streamForever() }
@@ -260,12 +261,14 @@ final class OpenedbotFeed: BotFeed {
             model.sections = roster.sections.sorted { ($0.position ?? 0) < ($1.position ?? 0) }.map { BotSection(id: $0.id, name: $0.name) }
 
             // Les fils à relire : demandés, ouverts, actifs, ou avec une approbation dont on n'a pas la commande.
-            var threads = requested.union(openThreads)
+            catchUpThreads.formIntersection(bots.compactMap(\.threadID))
+            var threads = requested.union(openThreads).union(catchUpThreads)
             for dto in roster.bots where dto.running == true || dto.awaitingApproval == true { threads.insert(dto.threadId) }
             for bot in bots where previous[bot.id]?.runs.contains(where: \.isLive) == true { threads.insert(bot.threadID ?? "") }
             threads.remove("")
             let snapshots = await fetchSnapshots(threads)
             guard started == generation else { return }
+            catchUpThreads.subtract(snapshots.keys)
 
             for i in bots.indices {
                 guard let thread = bots[i].threadID else { continue }

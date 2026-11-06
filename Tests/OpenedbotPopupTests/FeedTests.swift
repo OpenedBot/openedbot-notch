@@ -240,17 +240,22 @@ struct OpenedbotFeedTests {
         #expect(!feed.isStreaming)
     }
 
-    @Test func theFirstRefreshRereadsTheThreadsTheSessionHadLoaded() async throws {
+    @Test func theThreadsTheSessionHadLoadedAreRereadUntilReadOnce() async throws {
         let (feed, model, t, account) = try make()
         await signIn(account)
+        // Ops, inactif, avait son fil chargé avant la démonstration ; un bot parti entre-temps aussi.
+        feed.catchUpThreads = ["t-ops", "t-gone"]
+        t.on("/api/threads/t-ops", (503, #"{"error":{"code":"UNAVAILABLE"}}"#))
+        await feed.refresh(threads: [])
+        #expect(model.bot("b-ops")?.conversation == nil)
+        #expect(feed.catchUpThreads == ["t-ops"], "still pending after a failed read; the departed bot's thread is dropped")
         t.on("/api/threads/t-ops", (200, #"{"id":"t-ops","cursor":1,"messages":[],"runs":[],"workflows":[],"approvals":[]}"#))
-        // Ops, inactif, avait son fil chargé avant la démonstration : il est relu au retour.
-        feed.firstThreads = ["t-ops"]
-        feed.start()
-        defer { feed.stop() }
-        await waitUntil { model.bot("b-ops")?.conversation != nil }
-        #expect(t.calls.contains { $0.path == "/api/threads/t-ops" })
+        await feed.refresh(threads: [])
         #expect(model.bot("b-ops")?.conversation != nil)
+        #expect(feed.catchUpThreads.isEmpty)
+        let reads = t.calls.filter { $0.path == "/api/threads/t-ops" }.count
+        await feed.refresh(threads: [])
+        #expect(t.calls.filter { $0.path == "/api/threads/t-ops" }.count == reads, "read once is enough")
     }
 
     @Test func aLoadedRosterIsAnnouncedEvenEmpty() async throws {
