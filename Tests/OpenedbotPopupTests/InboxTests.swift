@@ -201,24 +201,35 @@ struct InboxTests {
         #expect(model.inbox.notices.isEmpty && model.inbox.unreadCount == 0)
     }
 
+    private func waiting(_ id: String, remote: String, command: String = "ls") -> Bot {
+        var b = bot(id, replies: [])
+        b.pending = Approval(remoteID: remote, botID: id, runID: "r", tool: "shell", command: command, expiresAt: now.addingTimeInterval(600))
+        return b
+    }
+
+    /// La session avant la démonstration : les bots donnés, une notification par demande en attente.
+    private func sessionSetAside(_ center: NoticeCenter, _ model: NotchModel, _ bots: [Bot]) {
+        model.bots = bots
+        for bot in bots where bot.pending != nil { center.transition(bot, .waiting) }
+        center.setAside()
+        #expect(model.inbox.notices.isEmpty, "the demo starts with an empty box")
+        model.bots = DemoBotFeed.roster(now: now)
+    }
+
     @Test func approvalsRestoredAfterTheDemoFollowTheResumedFeed() async {
         let model = NotchModel()
         let center = NoticeCenter(model: model)
         defer { center.stop() }
         model.plays = false
         // Avant la démonstration : une demande en attente sur seo, une sur ops.
-        var saved = Inbox()
-        saved.add(notice(.approval, "seo", approval: UUID()))
-        saved.add(notice(.approval, "ops", at: 1, approval: UUID()))
-        center.restore(saved)
-        // Le flux reprend : seo attend toujours (sous une nouvelle identité), ops a été répondu.
-        var seo = bot("seo", replies: [])
-        seo.pending = Approval(botID: "seo", runID: "r", tool: "shell", command: "ls", expiresAt: now.addingTimeInterval(600))
-        let resumed = try! #require(seo.pending?.id)
+        sessionSetAside(center, model, [waiting("seo", remote: "ap-seo"), waiting("ops", remote: "ap-ops")])
+        center.restore()
+        // Le flux reprend : seo attend toujours (sous une nouvelle identité locale), ops a été répondu.
+        let seo = waiting("seo", remote: "ap-seo")
         model.bots = [seo, bot("ops", replies: [])]
         center.rosterLoaded()
         #expect(model.inbox.unreadCount == 1)
-        #expect(model.inbox.notices.first { $0.botID == "seo" }?.approvalID == resumed)
+        #expect(model.inbox.notices.first { $0.botID == "seo" }?.approvalID == seo.pending?.id)
         #expect(model.inbox.notices.first { $0.botID == "ops" }?.read == true)
         // Répondue ensuite (le roster une fois vu par le centre), celle de seo se ferme comme les autres.
         try? await Task.sleep(for: .milliseconds(100))
@@ -227,19 +238,34 @@ struct InboxTests {
         #expect(model.inbox.unreadCount == 0)
     }
 
+    @Test func anotherRequestOfTheSameBotNeverTakesTheOldText() {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        model.plays = false
+        sessionSetAside(center, model, [waiting("seo", remote: "ap-a", command: "rm -rf build")])
+        center.restore()
+        // A répondue ailleurs pendant la démonstration, B demandée par le même bot.
+        let b = waiting("seo", remote: "ap-b", command: "git push")
+        model.bots = [b]
+        center.rosterLoaded()
+        let old = model.inbox.notices.first { $0.text.contains("rm -rf build") }
+        #expect(old?.read == true && old?.approvalID != b.pending?.id, "A is closed, never bound to B")
+        let fresh = model.inbox.notices.first { $0.text.contains("git push") }
+        #expect(fresh?.approvalID == b.pending?.id && fresh?.read == false, "B is announced with its own text")
+    }
+
     @Test func restoredApprovalsWaitForTheirReconciliationBeforeAnyBanner() {
         let model = NotchModel()
         let center = NoticeCenter(model: model)
         defer { center.stop() }
-        center.isIsland = { true }
         model.plays = false
-        var saved = Inbox()
-        saved.add(notice(.approval, "seo", approval: UUID()))
-        center.restore(saved)
+        sessionSetAside(center, model, [waiting("seo", remote: "ap-seo")])
+        center.isIsland = { true }
+        center.restore()
         center.pump()
         #expect(model.banner == nil, "not with the identity from before the demo")
-        var seo = bot("seo", replies: [])
-        seo.pending = Approval(botID: "seo", runID: "r", tool: "shell", command: "ls", expiresAt: now.addingTimeInterval(600))
+        let seo = waiting("seo", remote: "ap-seo")
         model.bots = [seo]
         center.rosterLoaded()
         guard case .notice(let shown) = model.banner else { Issue.record("no banner after the reconciliation"); return }
@@ -250,9 +276,9 @@ struct InboxTests {
         let model = NotchModel()
         let center = NoticeCenter(model: model)
         defer { center.stop() }
-        var saved = Inbox()
-        saved.add(notice(.approval, "seo", approval: UUID()))
-        center.restore(saved)
+        model.plays = false
+        sessionSetAside(center, model, [waiting("seo", remote: "ap-seo")])
+        center.restore()
         // Tous les bots archivés pendant la démonstration : le roster relu est vide.
         model.bots = []
         center.rosterLoaded()

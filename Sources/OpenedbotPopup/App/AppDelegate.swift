@@ -21,7 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var live: OpenedbotFeed?
     /// La démonstration demandée par openedbot (`demo`), nil sinon. Elle prime sur la session.
     private(set) var demo: DemoBotFeed?
-    private var savedInbox: Inbox?
     private(set) var notch: NotchWindowController!
     private var status: StatusItemController!
     private var settingsWindow: NSWindow?
@@ -200,10 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notch.onInteraction = { [weak demo] in demo?.userInteracted() }
         if notch.feed !== demo { notch.feed = demo }
         // Les notifications de la session ne se mêlent pas à la démonstration ; elles reviennent après.
-        if savedInbox == nil { savedInbox = model.inbox }
-        model.inbox = Inbox()
-        // Une bannière de la session déjà affichée ne reste pas par-dessus les bots fictifs.
-        notices.dismissBanner()
+        // Une bannière de la session déjà affichée ne reste pas non plus par-dessus les bots fictifs.
+        notices.setAside()
         // En île autour de la caméra, quel que soit le bord choisi (gardé tel quel).
         model.edgeOverride = .top
         demo.start(cycles: cycles)
@@ -215,8 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         demo.stop()
         self.demo = nil
         notch.onInteraction = nil
-        if let savedInbox { notices.restore(savedInbox) }
-        savedInbox = nil
+        notices.restore()
         model.edgeOverride = nil
         model.isExpanded = false
         model.bots = []

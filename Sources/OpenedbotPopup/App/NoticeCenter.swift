@@ -16,6 +16,10 @@ final class NoticeCenter {
     /// La démonstration joue : ses bots sont fictifs, rien d'eux ne devient une notification.
     var isMuted: () -> Bool = { false }
 
+    /// La boîte de la session, mise de côté le temps de la démonstration.
+    private var setAsideInbox: Inbox?
+    /// Les demandes en attente quand la démonstration a commencé : identité locale → openedbot.
+    private var setAsideApprovals: [UUID: String] = [:]
     /// La boîte de la session vient d'être rendue (fin de la démonstration) : ses demandes
     /// d'accord se recalent sur le premier roster du flux qui reprend.
     private var reconcilesApprovals = false
@@ -165,9 +169,23 @@ final class NoticeCenter {
         }
     }
 
-    /// Rend la boîte de la session mise de côté pendant la démonstration. Le flux qui reprend
-    /// donne de nouvelles identités à ses demandes d'accord : elles se recalent à son premier roster.
-    func restore(_ inbox: Inbox) {
+    /// La démonstration commence : la boîte de la session est mise de côté (une fois, même si la
+    /// démonstration est rejouée), avec l'identité openedbot de chaque demande encore en attente.
+    func setAside() {
+        if setAsideInbox == nil {
+            setAsideInbox = model.inbox
+            setAsideApprovals = Self.remoteApprovals(model.bots)
+        }
+        reconcilesApprovals = false
+        model.inbox = Inbox()
+        dismissBanner()
+    }
+
+    /// La démonstration est finie : la boîte de la session revient. Le flux qui reprend donne de
+    /// nouvelles identités locales à ses demandes d'accord : elles se recalent à son premier roster.
+    func restore() {
+        guard let inbox = setAsideInbox else { return }
+        setAsideInbox = nil
         model.inbox = inbox
         reconcilesApprovals = true
     }
@@ -176,9 +194,25 @@ final class NoticeCenter {
     func rosterLoaded() {
         guard reconcilesApprovals, !isMuted() else { return }
         reconcilesApprovals = false
-        let pending = Dictionary(model.bots.compactMap { b in b.pending.map { (b.id, $0.id) } }, uniquingKeysWith: { a, _ in a })
-        model.inbox.reconcileApprovals(pending: pending)
+        let before = setAsideApprovals
+        setAsideApprovals = [:]
+        var now: [String: UUID] = [:]
+        for (local, remote) in Self.remoteApprovals(model.bots) { now[remote] = local }
+        // La même demande (même identité openedbot) seulement : une autre demande du même bot ne
+        // reprend jamais le texte d'une ancienne.
+        model.inbox.reconcileApprovals { old in before[old].flatMap { now[$0] } }
+        // Les demandes arrivées pendant la démonstration : annoncées comme le flux l'aurait fait.
+        let known = Set(before.values)
+        for bot in model.bots {
+            if let remote = bot.pending?.remoteID, !known.contains(remote) { transition(bot, .waiting) }
+        }
         pump()
+    }
+
+    private static func remoteApprovals(_ bots: [Bot]) -> [UUID: String] {
+        var out: [UUID: String] = [:]
+        for bot in bots { if let p = bot.pending, let remote = p.remoteID { out[p.id] = remote } }
+        return out
     }
 
     private func rosterChanged() {
