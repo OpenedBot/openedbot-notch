@@ -65,6 +65,16 @@ final class DemoBotFeed: BotFeed {
         isPlaying = false
     }
 
+    /// Reprend au début du cycle, ses textes réécrits (la langue a changé) : la limite de cycles
+    /// restante et un geste déjà fait tiennent toujours.
+    func relocalize() {
+        guard isPlaying else { return }
+        let remaining = cycles == 0 ? 0 : max(1, cycles - completedCycles)
+        let wasTouched = touched
+        start(cycles: remaining)
+        touched = wasTouched
+    }
+
     /// Survol, clic : la démonstration finit son cycle puis s'arrête.
     func userInteracted() {
         touched = true
@@ -136,12 +146,20 @@ final class DemoBotFeed: BotFeed {
             _ = apply(approvalID: approvalID, allow: true)
             model.flash(Island.Flash(botID: bot.id, botName: bot.name, kind: .allowed), for: 2)
         }
+        let allowed = given ?? true
         fold()
         try await sleep(1)
         finish(Self.researchID, detail: tr("Summary of 4 offers", "Synthèse de 4 offres"))
-        step(Self.writingID, to: 3, detail: tr("Publishing", "Publication"))
+        if allowed {
+            step(Self.writingID, to: 3, detail: tr("Publishing", "Publication"))
+        }
         try await sleep(1.5)
-        finish(Self.writingID, detail: tr("Post published", "Billet publié"))
+        if allowed {
+            finish(Self.writingID, detail: tr("Post published", "Billet publié"))
+        } else {
+            // Refusé : rien n'est publié, le billet reste un brouillon.
+            finish(Self.writingID, detail: tr("Kept as a draft", "Gardé en brouillon"))
+        }
         if let bot = model.bot(Self.writingID) {
             model.flash(Island.Flash(botID: bot.id, botName: bot.name, kind: .finished), for: 1.5)
         }

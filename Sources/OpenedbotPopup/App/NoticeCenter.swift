@@ -13,6 +13,8 @@ final class NoticeCenter {
     var isIsland: () -> Bool = { false }
     /// La fenêtre du bot est-elle ouverte ? Sa réponse s'y lit déjà : pas de notification.
     var isDialogOpen: (String) -> Bool = { _ in false }
+    /// La démonstration joue : ses bots sont fictifs, rien d'eux ne devient une notification.
+    var isMuted: () -> Bool = { false }
 
     private var bannerWork: Task<Void, Never>?
     private var readWork: Task<Void, Never>?
@@ -47,6 +49,7 @@ final class NoticeCenter {
 
     /// Une bascule du flux : demande d'accord, run fini ou en échec, runtime tombé ou revenu.
     func transition(_ bot: Bot, _ transition: FeedTransition) {
+        guard !isMuted() else { return }
         let notice: Notice
         switch transition {
         case .waiting:
@@ -158,7 +161,7 @@ final class NoticeCenter {
     private func rosterChanged() {
         let bots = model.bots
         // Les réponses des bots, une par bot, sauf si sa fenêtre est ouverte.
-        for reply in MessageDiff.replies(previous: knownMessages, bots: bots, since: startedAt) where !isDialogOpen(reply.botID) {
+        for reply in MessageDiff.replies(previous: knownMessages, bots: bots, since: startedAt) where !isMuted() && !isDialogOpen(reply.botID) {
             let more = reply.count > 1 ? tr(" (+\(reply.count - 1))", " (+\(reply.count - 1))") : ""
             post(Notice(kind: .message, botID: reply.botID, botName: reply.botName, text: reply.text + more, at: reply.at))
         }

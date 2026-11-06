@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notices = NoticeCenter(model: model)
         notices.isIsland = { [weak self] in self?.notch.isIsland ?? false }
         notices.isDialogOpen = { [weak self] id in self?.notch.hasDialog(id) ?? false }
+        notices.isMuted = { [weak self] in self?.demo != nil }
         notch.notices = notices
         feed.onTransition = { [weak self] bot, transition in self?.handle(bot, transition) }
         status = StatusItemController(model: model)
@@ -130,8 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func languageChanged() {
         settingsWindow?.title = tr("openedbot notch Settings", "Réglages openedbot notch")
         if let demo {
-            // Ses textes aussi sont écrits à sa création : elle reprend au début, dans la nouvelle langue.
-            if demo.isPlaying { startDemo(cycles: 0) }
+            // Ses textes aussi sont écrits à sa création : elle reprend au début du cycle, dans la
+            // nouvelle langue, sans perdre sa limite de cycles ni un geste déjà fait.
+            demo.relocalize()
             return
         }
         if live == nil {
@@ -198,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Les notifications de la session ne se mêlent pas à la démonstration ; elles reviennent après.
         if savedInbox == nil { savedInbox = model.inbox }
         model.inbox = Inbox()
+        // Une bannière de la session déjà affichée ne reste pas par-dessus les bots fictifs.
+        notices.dismissBanner()
         // En île autour de la caméra, quel que soit le bord choisi (gardé tel quel).
         model.edgeOverride = .top
         demo.start(cycles: cycles)

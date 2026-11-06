@@ -57,7 +57,36 @@ struct DemoFeedTests {
         await waitUntil { ended > 0 }
         #expect(ended == 1)
         #expect(feed.completedCycles == 1)
-        #expect(model.bot(DemoBotFeed.writingID)?.thread.contains { $0.text == "Refusé (démo)" } == true)
+        let writing = try! #require(model.bot(DemoBotFeed.writingID))
+        #expect(writing.thread.contains { $0.text == "Refusé (démo)" })
+        // Refusé : rien n'est publié.
+        #expect(!writing.thread.contains { $0.text == "Publication" })
+        #expect(writing.runs.first?.detail == "Gardé en brouillon")
+    }
+
+    @Test func aLanguageChangeKeepsTheCycleLimitAndTheTouch() async {
+        let model = NotchModel()
+        let replay = DemoBotFeed(model: model, timeScale: 0, answerTimeout: .zero)
+        var ended = 0
+        replay.onEnded = { ended += 1 }
+        replay.start(cycles: 2)
+        replay.relocalize()
+        await waitUntil { ended > 0 }
+        #expect(ended == 1, "a replay still stops by itself")
+        #expect(replay.completedCycles == 2)
+
+        let firstRun = DemoBotFeed(model: model, timeScale: 0, answerTimeout: .seconds(60))
+        var firstEnded = 0
+        firstRun.onEnded = { firstEnded += 1 }
+        firstRun.start(cycles: 0)
+        firstRun.userInteracted()
+        firstRun.relocalize()
+        #expect(firstRun.touched)
+        await waitUntil { model.bot(DemoBotFeed.writingID)?.pending != nil }
+        if let approval = model.bot(DemoBotFeed.writingID)?.pending { firstRun.respond(approvalID: approval.id, allow: true) }
+        await waitUntil { firstEnded > 0 }
+        #expect(firstEnded == 1)
+        #expect(firstRun.completedCycles == 1)
     }
 
     @Test func untouchedItKeepsLoopingAndStopsWhenAsked() async {

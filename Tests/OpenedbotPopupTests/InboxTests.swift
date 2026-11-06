@@ -201,6 +201,22 @@ struct InboxTests {
         #expect(model.inbox.notices.isEmpty && model.inbox.unreadCount == 0)
     }
 
+    @Test func theDemoNeverBecomesANotification() async {
+        let model = NotchModel()
+        let center = NoticeCenter(model: model)
+        defer { center.stop() }
+        model.plays = false
+        center.isMuted = { true }
+        // Une réponse d'un bot de la démonstration, puis une demande d'accord : rien dans la boîte.
+        model.bots = DemoBotFeed.roster(now: Date())
+        for _ in 0..<20 { await Task.yield() }
+        model.update(DemoBotFeed.writingID) { $0.thread.append(ChatMessage(role: .bot, text: "Le billet est prêt.")) }
+        for _ in 0..<20 { await Task.yield() }
+        if let bot = model.bot(DemoBotFeed.writingID) { center.transition(bot, .finished) }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(model.inbox.notices.isEmpty && model.inbox.unreadCount == 0)
+    }
+
     @Test func awayKeepsBannersForLater() {
         let model = NotchModel()
         let center = NoticeCenter(model: model)
