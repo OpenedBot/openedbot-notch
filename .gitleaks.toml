@@ -1,0 +1,7 @@
+# gitleaks configuration: the default rules. Review any finding before
+# allowlisting a path here; nothing is allowlisted today.
+# Run: gitleaks git . -c .gitleaks.toml
+title = "openedbot-notch gitleaks config"
+
+[extend]
+useDefault = true
